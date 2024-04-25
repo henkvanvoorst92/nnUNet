@@ -14,7 +14,6 @@ from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_datas
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from torch.backends import cudnn
 
-
 def find_free_network_port() -> int:
     """Finds a free port on localhost.
 
@@ -149,6 +148,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  val_with_best: bool = False,
                  args=None,
                  device: torch.device = torch.device('cuda')):
+
     if plans_identifier == 'nnUNetPlans':
         print("\n############################\n"
               "INFO: You are using the old nnU-Net default plans. We have updated our recommendations. "
@@ -199,7 +199,6 @@ def run_training(dataset_name_or_id: Union[str, int],
         if 'My' in trainer_class_name:
             nnunet_trainer.add_args(args)
 
-
         if disable_checkpointing:
             nnunet_trainer.disable_checkpointing = disable_checkpointing
 
@@ -210,6 +209,7 @@ def run_training(dataset_name_or_id: Union[str, int],
         if torch.cuda.is_available():
             cudnn.deterministic = False
             cudnn.benchmark = True
+
 
         if not only_run_validation:
             nnunet_trainer.run_training()
@@ -275,11 +275,9 @@ def init_args(args=None):
                              "Use CUDA_VISIBLE_DEVICES=X nnUNetv2_train [...] instead!")
     # my own new arguments
     parser.add_argument('--save_multiple_checkpoints', action='store_true', required=False,
-                        help='[OPTIONAL] Stores multiple checkpoints when training for later analyses')
+                        help='[OPTIONAL] Stores multiple checkpoints when training for later analyses') #pm change to parse list here
     parser.add_argument('--weight_ctline_dice_loss', default=0.0, type=float, required=False,
                         help='[OPTIONAL] Weight of the centerline dice loss, if >0 uses centerline dice when training')
-    parser.add_argument('--patch_size', default=None, required=False,
-                        help='[OPTIONAL] overrules automated patch size and defines one my default (in mm?)')
     parser.add_argument('--random_gt_sampling', action='store_true', required=False,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
 
@@ -315,3 +313,55 @@ def run_training_entry():
 
 if __name__ == '__main__':
     run_training_entry()
+    # args = init_args()
+    # print(args)
+    # assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
+    # if args.device == 'cpu':
+    #     # let's allow torch to use hella threads
+    #     import multiprocessing
+    #     torch.set_num_threads(multiprocessing.cpu_count())
+    #     device = torch.device('cpu')
+    # elif args.device == 'cuda':
+    #     # multithreading in torch doesn't help nnU-Net if run on GPU
+    #     torch.set_num_threads(1)
+    #     torch.set_num_interop_threads(1)
+    #     device = torch.device('cuda')
+    # else:
+    #     device = torch.device('mps')
+    #
+    #
+    # nnunet_trainer = get_trainer_from_args(args.dataset_name_or_id, args.configuration, args.fold, args.tr,
+    #                                        args.p, args.use_compressed, device=device)
+    #
+    # if 'My' in args.tr:
+    #     nnunet_trainer.add_args(args)
+    #
+    # if torch.cuda.is_available():
+    #     cudnn.deterministic = False
+    #     cudnn.benchmark = True
+    #
+    # #nnunet_trainer.on_train_start()
+    # #nnunet_trainer.dataloader_train, nnunet_trainer.dataloader_val = nnunet_trainer.get_dataloaders()
+    #
+    # from nnunetv2.training.dataloading.data_loader_3d_random_raters import nnUNetDataLoader3D_random_raters
+    # dataset_tr, dataset_val = nnunet_trainer.get_tr_and_val_datasets()
+    #
+    # patch_size = nnunet_trainer.configuration_manager.patch_size
+    # (
+    #     rotation_for_DA,
+    #     do_dummy_2d_data_aug,
+    #     initial_patch_size,
+    #     mirror_axes,
+    # ) = nnunet_trainer.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+    #
+    # dim = len(initial_patch_size)
+    #
+    #
+    # dl_tr = nnUNetDataLoader3D_random_raters(dataset_tr, nnunet_trainer.batch_size,
+    #                                          initial_patch_size,
+    #                                          nnunet_trainer.configuration_manager.patch_size,
+    #                                          nnunet_trainer.label_manager,
+    #                                          oversample_foreground_percent=nnunet_trainer.oversample_foreground_percent,
+    #                                          sampling_probabilities=None, pad_sides=None)
+
+    # print(len(nnunet_trainer.dataloader_train))

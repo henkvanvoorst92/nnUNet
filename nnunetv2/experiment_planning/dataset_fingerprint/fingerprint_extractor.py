@@ -44,6 +44,7 @@ class DatasetFingerprintExtractor(object):
         """
         images=image with multiple channels = shape (c, x, y(, z))
         """
+
         assert images.ndim == 4 and segmentation.ndim == 4
         assert not np.any(np.isnan(segmentation)), "Segmentation contains NaN values. grrrr.... :-("
         assert not np.any(np.isnan(images)), "Images contains NaN values. grrrr.... :-("
