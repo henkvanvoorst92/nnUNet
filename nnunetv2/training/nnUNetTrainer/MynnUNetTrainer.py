@@ -1324,7 +1324,7 @@ class MynnUNetTrainer(nnUNetTrainer):
         self.on_train_start()
 
         #for epoch in range(self.current_epoch, self.num_epochs):
-        for epoch in range(self.current_epoch, self.current_epoch+1):
+        for epoch in range(self.current_epoch, self.num_epochs):
             self.on_epoch_start()
 
             self.on_train_epoch_start()
