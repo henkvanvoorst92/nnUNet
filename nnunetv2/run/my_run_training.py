@@ -276,7 +276,7 @@ def init_args(args=None):
     # my own new arguments
     parser.add_argument('--save_multiple_checkpoints', action='store_true', required=False,
                         help='[OPTIONAL] Stores multiple checkpoints when training for later analyses') #pm change to parse list here
-    parser.add_argument('--weight_ctline_dice_loss', default=0.0, type=float, required=False,
+    parser.add_argument('--w_cldc', default=0.0, type=float, required=False,
                         help='[OPTIONAL] Weight of the centerline dice loss, if >0 uses centerline dice when training')
     parser.add_argument('--random_gt_sampling', action='store_true', required=False,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
@@ -340,15 +340,23 @@ if __name__ == '__main__':
     #     cudnn.deterministic = False
     #     cudnn.benchmark = True
     #
-    # #nnunet_trainer.on_train_start()
-    # #nnunet_trainer.dataloader_train, nnunet_trainer.dataloader_val = nnunet_trainer.get_dataloaders()
     # nnunet_trainer.on_train_start()
-    # #nnunet_trainer.on_train_epoch_start()
+    # nnunet_trainer.dataloader_train, nnunet_trainer.dataloader_val = nnunet_trainer.get_dataloaders()
+    # #loss = nnunet_trainer._build_loss()
+    # nnunet_trainer.on_train_start()
+    # nnunet_trainer.on_train_epoch_start()
+    #
     # train_outputs = []
     # train_inputs = next(nnunet_trainer.dataloader_train)
-    # #train_outputs.append(nnunet_trainer.train_step(train_inputs))
+    # #Batch extraction
+    # data = train_inputs['data'].type(torch.float16).cuda()
+    # target = train_inputs['target'][0].type(torch.float16).cuda()
+    # with autocast(nnunet_trainer.device.type, enabled=True) if nnunet_trainer.device.type == 'cuda' else dummy_context():
+    #     output = nnunet_trainer.network(data)
     #
-    # print(z)
+    # # train_outputs.append(nnunet_trainer.train_step(train_inputs))
+    #
+    # #print(z)
     # print('ehloo')
     #nnunet_trainer.on_train_epoch_end(train_outputs)
 

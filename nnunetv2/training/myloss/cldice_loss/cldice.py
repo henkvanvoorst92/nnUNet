@@ -4,19 +4,30 @@ import torch.nn.functional as F
 from .soft_skeleton import SoftSkeletonize
 
 class soft_cldice(nn.Module):
-    def __init__(self, iter_=10, smooth = 1., y_true_is_skel=False, exclude_background=False):
+    def __init__(self,iter_=10, smooth = 1.,
+                 y_true_skel_input_channel=None,
+                 y_pred_skel_input_channel=None,
+                 exclude_background=False,
+                 *args, **kwargs):
         super(soft_cldice, self).__init__()
+
+        self.args = args
+        self.kwargs = kwargs
+
         self.iter = iter_
         self.smooth = smooth
-        self.soft_skeletonize = SoftSkeletonize(num_iter=iter_)
+        self.soft_skeletonize = SoftSkeletonize(num_iter=self.iter)
+
         self.exclude_background = exclude_background
+        self.y_true_skel_input_channel = y_true_skel_input_channel
+        self.y_pred_skel_input_channel = y_pred_skel_input_channel
 
     def compute_cldice(self, y_true, y_pred, skel_true, skel_pred):
         tprec = (torch.sum(torch.multiply(skel_pred, y_true))+self.smooth)/(torch.sum(skel_pred)+self.smooth)
         tsens = (torch.sum(torch.multiply(skel_true, y_pred))+self.smooth)/(torch.sum(skel_true)+self.smooth)
         cl_dice = 1.- 2.0*(tprec*tsens)/(tprec+tsens)
         return cl_dice
-    def forward(self, y_true, y_pred, skel_true=None, skel_pred=None):
+    def forward(self, y_true, y_pred):
         #Either choose to skeletonize y_true skeleton or to
         #provide y_true as skeleton as additional  input
 
@@ -24,9 +35,16 @@ class soft_cldice(nn.Module):
             y_true = y_true[:, 1:, :, :]
             y_pred = y_pred[:, 1:, :, :]
 
-        if skel_true is None:
+        # skeletons can be stacked in the y_true and y_pred channels
+
+        if self.y_true_skel_input_channel is not None:
+            skel_true = y_true[:,self.y_true_skel_input_channel:self.y_true_skel_input_channel+1]
+        else:
             skel_true = self.soft_skeletonize(y_true)
-        if skel_pred is None:
+
+        if self.y_pred_skel_input_channel is not None:
+            skel_pred = y_pred[:,self.y_pred_skel_input_channel:self.y_pred_skel_input_channel+1]
+        else:
             skel_pred = self.soft_skeletonize(y_pred)
 
         tprec = (torch.sum(torch.multiply(skel_pred, y_true))+self.smooth)/(torch.sum(skel_pred)+self.smooth)

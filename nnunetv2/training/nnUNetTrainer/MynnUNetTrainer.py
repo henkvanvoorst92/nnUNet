@@ -49,7 +49,7 @@ from nnunetv2.training.dataloading.data_loader_3d_random_raters import nnUNetDat
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from nnunetv2.training.dataloading.utils import get_case_identifiers, unpack_dataset
 from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
+from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss, DC_CE_clDC_loss
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
@@ -213,7 +213,7 @@ class MynnUNetTrainer(nnUNetTrainer):
         #new self arguments for training
         if args.save_multiple_checkpoints: #pm change this to parse a list itsel
             self.save_checkpoint_list = [5,10,50,100,250,500] #--> store these checkpoints for analyses
-        self.weight_ctline_dice_loss = args.weight_ctline_dice_loss
+        self.weight_ctline_dice_loss = args.w_cldc
         self.random_gt_sampling = args.random_gt_sampling
 
 
@@ -388,9 +388,19 @@ class MynnUNetTrainer(nnUNetTrainer):
                                    use_ignore_label=self.label_manager.ignore_label is not None,
                                    dice_class=MemoryEfficientSoftDiceLoss)
         else:
-            loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
-                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
-                                  ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+            if self.weight_ctline_dice_loss>0:
+                loss = DC_CE_clDC_loss({'batch_dice': self.configuration_manager.batch_dice,
+                                       'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp},
+                                       {},
+                                       {},
+                                       weight_ce=1, weight_dice=1, weight_cldice=1,
+                                      ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+
+            else:
+                loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
+                                       'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
+                                      ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+
 
         # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
         # this gives higher resolution outputs more weight in the loss
