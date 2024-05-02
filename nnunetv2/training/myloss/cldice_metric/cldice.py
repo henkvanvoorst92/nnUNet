@@ -14,20 +14,31 @@ def cl_score(v, s):
     return np.sum(v*s)/np.sum(s)
 
 
-def clDice(v_p, v_l):
+def clDice(y_pred, y_true, skel_pred=None, skel_true=None):
     """[this function computes the cldice metric]
 
     Args:
-        v_p ([bool]): [predicted image]
-        v_l ([bool]): [ground truth image]
+        y_pred ([bool]): [predicted image]
+        y_true ([bool]): [ground truth image]
+        skel_pred : pred skeleton acquired via alternative way
+        skel_true : true skeleton acquired in alternative way
 
     Returns:
         [float]: [cldice metric]
     """
-    if len(v_p.shape)==2:
-        tprec = cl_score(v_p,skeletonize(v_l))
-        tsens = cl_score(v_l,skeletonize(v_p))
-    elif len(v_p.shape)==3:
-        tprec = cl_score(v_p,skeletonize_3d(v_l))
-        tsens = cl_score(v_l,skeletonize_3d(v_p))
+    if skel_pred is None:
+        if len(y_pred.shape) == 2:
+            skel_pred = skeletonize(y_pred)
+        elif len(y_pred.shape)==3:
+            skel_pred = skeletonize_3d(y_pred)
+
+    if skel_true is None:
+        if len(y_true.shape) == 2:
+            skel_true = skeletonize(y_true)
+        elif len(y_true.shape)==3:
+            skel_true = skeletonize_3d(y_true)
+
+    tprec = cl_score(y_pred, skel_true)
+    tsens = cl_score(y_true, skel_pred)
+
     return 2*tprec*tsens/(tprec+tsens)

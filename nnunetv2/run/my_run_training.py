@@ -350,10 +350,30 @@ if __name__ == '__main__':
     # train_inputs = next(nnunet_trainer.dataloader_train)
     # #Batch extraction
     # data = train_inputs['data'].type(torch.float16).cuda()
-    # target = train_inputs['target'][0].type(torch.float16).cuda()
+    # target = train_inputs['target']#[0].type(torch.float16).cuda()
+    # if isinstance(target, list):
+    #     target = [i.to(nnunet_trainer.device, non_blocking=True) for i in target]
+    # else:
+    #     target = target.to(nnunet_trainer.device, non_blocking=True)
+    #
     # with autocast(nnunet_trainer.device.type, enabled=True) if nnunet_trainer.device.type == 'cuda' else dummy_context():
     #     output = nnunet_trainer.network(data)
+    #     if nnunet_trainer.enable_deep_supervision:
+    #         output = output[0]
+    #         target = target[0]
     #
+    # # the following is needed for online evaluation. Fake dice (green line)
+    # axes = [0] + list(range(2, output.ndim))
+    #
+    # if nnunet_trainer.label_manager.has_regions:
+    #     predicted_segmentation_onehot = (torch.sigmoid(output) > 0.5).long()
+    # else:
+    #     # no need for softmax
+    #     output_seg = output.argmax(1)[:, None]
+    #     predicted_segmentation_onehot = torch.zeros(output.shape, device=output.device, dtype=torch.float32)
+    #     predicted_segmentation_onehot.scatter_(1, output_seg, 1)
+    #
+
     # # train_outputs.append(nnunet_trainer.train_step(train_inputs))
     #
     # #print(z)

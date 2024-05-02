@@ -19,6 +19,7 @@ class nnUNetLogger(object):
             'mean_fg_dice': list(),
             'ema_fg_dice': list(),
             'dice_per_class_or_region': list(),
+            #'cl_dice': list(),
             'train_losses': list(),
             'val_losses': list(),
             'lrs': list(),
