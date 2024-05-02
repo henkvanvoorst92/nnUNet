@@ -342,26 +342,13 @@ if __name__ == '__main__':
     #
     # #nnunet_trainer.on_train_start()
     # #nnunet_trainer.dataloader_train, nnunet_trainer.dataloader_val = nnunet_trainer.get_dataloaders()
+    # nnunet_trainer.on_train_start()
+    # #nnunet_trainer.on_train_epoch_start()
+    # train_outputs = []
+    # train_inputs = next(nnunet_trainer.dataloader_train)
+    # #train_outputs.append(nnunet_trainer.train_step(train_inputs))
     #
-    # from nnunetv2.training.dataloading.data_loader_3d_random_raters import nnUNetDataLoader3D_random_raters
-    # dataset_tr, dataset_val = nnunet_trainer.get_tr_and_val_datasets()
-    #
-    # patch_size = nnunet_trainer.configuration_manager.patch_size
-    # (
-    #     rotation_for_DA,
-    #     do_dummy_2d_data_aug,
-    #     initial_patch_size,
-    #     mirror_axes,
-    # ) = nnunet_trainer.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
-    #
-    # dim = len(initial_patch_size)
-    #
-    #
-    # dl_tr = nnUNetDataLoader3D_random_raters(dataset_tr, nnunet_trainer.batch_size,
-    #                                          initial_patch_size,
-    #                                          nnunet_trainer.configuration_manager.patch_size,
-    #                                          nnunet_trainer.label_manager,
-    #                                          oversample_foreground_percent=nnunet_trainer.oversample_foreground_percent,
-    #                                          sampling_probabilities=None, pad_sides=None)
+    # print(z)
+    # print('ehloo')
+    #nnunet_trainer.on_train_epoch_end(train_outputs)
 
-    # print(len(nnunet_trainer.dataloader_train))

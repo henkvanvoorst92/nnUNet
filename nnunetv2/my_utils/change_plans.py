@@ -3,7 +3,7 @@ import os
 import copy
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import load_json, save_json
-
+from sklearn.model_selection import KFold, StratifiedKFold
 
 def update_nested_dict(original_dict, update_dict):
     """
@@ -55,3 +55,19 @@ def generate_pixel_patchsize(spacing, mm_patch_size):
     mm_patch_size = np.array(mm_patch_size)
     vox_patch_size = [int(i) for i in (mm_patch_size / spacing)]
     return list(vox_patch_size)
+
+def k_fold_split(X, k, y=None, random_seed=42):
+    # Choose the splitting strategy based on the presence of y
+    if y is not None:
+        kf = StratifiedKFold(n_splits=k, shuffle=True, random_state=random_seed)
+    else:
+        kf = KFold(n_splits=k, shuffle=True, random_state=random_seed)
+
+    result = []
+    # Generate indices for splitting
+    for train_index, test_index in kf.split(X, y):
+        dct = {}
+        dct['train'] = [X[i] for i in train_index]
+        dct['val'] = [X[i] for i in test_index]
+        result.append(dct)
+    return result

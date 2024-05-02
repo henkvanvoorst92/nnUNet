@@ -659,6 +659,7 @@ class MynnUNetTrainer(nnUNetTrainer):
         dl_tr, dl_val = self.get_plain_dataloaders(initial_patch_size, dim)
 
         allowed_num_processes = get_allowed_n_proc_DA()
+        #allowed_num_processes = 0
         if allowed_num_processes == 0:
             mt_gen_train = SingleThreadedAugmenter(dl_tr, tr_transforms)
             mt_gen_val = SingleThreadedAugmenter(dl_val, val_transforms)
@@ -677,6 +678,9 @@ class MynnUNetTrainer(nnUNetTrainer):
 
     def get_plain_dataloaders(self, initial_patch_size: Tuple[int, ...], dim: int):
         dataset_tr, dataset_val = self.get_tr_and_val_datasets()
+
+        print('Training keys:', dataset_tr.keys())
+        print('Validation keys:', dataset_val.keys())
 
         if dim == 2:
             dl_tr = nnUNetDataLoader2D(dataset_tr, self.batch_size,
