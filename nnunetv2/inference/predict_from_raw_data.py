@@ -62,6 +62,8 @@ class nnUNetPredictor(object):
         self.device = device
         self.perform_everything_on_device = perform_everything_on_device
 
+        self.torch_type = torch.half
+
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
                                              checkpoint_name: str = 'checkpoint_final.pth'):
@@ -554,6 +556,7 @@ class nnUNetPredictor(object):
                                                        data: torch.Tensor,
                                                        slicers,
                                                        do_on_device: bool = True,
+                                                       torch_type = torch.half
                                                        ):
         predicted_logits = n_predictions = prediction = gaussian = workon = None
         results_device = self.device if do_on_device else torch.device('cpu')
@@ -570,13 +573,19 @@ class nnUNetPredictor(object):
             if self.verbose:
                 print(f'preallocating results arrays on device {results_device}')
             predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
-                                           dtype=torch.half,
+                                           dtype=torch_type,
                                            device=results_device)
-            n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
+            n_predictions = torch.zeros(data.shape[1:], dtype=torch_type, device=results_device)
 
             if self.use_gaussian:
+                if torch_type!=torch.half:
+                    scaling_factor = .5
+                else:
+                    scaling_factor = 10
+
                 gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
-                                            value_scaling_factor=10,
+                                            value_scaling_factor=scaling_factor,
+                                            dtype=torch_type,
                                             device=results_device)
             else:
                 gaussian = 1
@@ -613,6 +622,8 @@ class nnUNetPredictor(object):
         assert isinstance(input_image, torch.Tensor)
         self.network = self.network.to(self.device)
         self.network.eval()
+        if self.torch_type != torch.half:
+            self.network.type(self.torch_type)
 
         empty_cache(self.device)
 
@@ -622,6 +633,7 @@ class nnUNetPredictor(object):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
         # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
+
         with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
@@ -639,14 +651,25 @@ class nnUNetPredictor(object):
 
             if self.perform_everything_on_device and self.device != 'cpu':
                 # we need to try except here because we can run OOM in which case we need to fall back to CPU as a results device
-                try:
+                if self.torch_type!=torch.half:
+                    #self.network.type(self.torch_type)
                     predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
-                                                                                           self.perform_everything_on_device)
-                except RuntimeError:
-                    print(
-                        'Prediction on device was unsuccessful, probably due to a lack of memory. Moving results arrays to CPU')
-                    empty_cache(self.device)
-                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
+                                                                                           self.perform_everything_on_device,
+                                                                                           torch_type=self.torch_type)
+                else:
+                    try:
+                        predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
+                                                                                               self.perform_everything_on_device)
+                    except RuntimeError:
+                        try:
+                            predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
+                                                                                                   self.perform_everything_on_device,
+                                                                                                   torch_type=torch.float32)
+                        except RuntimeError:
+                            print(
+                                'Prediction on device was unsuccessful, probably due to a lack of memory. Moving results arrays to CPU')
+                            empty_cache(self.device)
+                            predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
             else:
                 predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
                                                                                        self.perform_everything_on_device)

@@ -280,6 +280,8 @@ def init_args(args=None):
                         help='[OPTIONAL] Weight of the centerline dice loss, if >0 uses centerline dice when training')
     parser.add_argument('--random_gt_sampling', action='store_true', required=False,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
+    parser.add_argument('--num_epochs', default=1000,
+                        help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
 
     if is_notebook():
         print("Detected notebook environment, using default argument values.")
@@ -306,16 +308,16 @@ def run_training_entry():
         device = torch.device('mps')
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.num_gpus, args.use_compressed, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
+                 args.use_compressed, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
                  args = args,
                  device=device)
 
 
 if __name__ == '__main__':
     run_training_entry()
-    # args = init_args()
-    # print(args)
-    # assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
+    args = init_args()
+    print(args)
+    assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
     # if args.device == 'cpu':
     #     # let's allow torch to use hella threads
     #     import multiprocessing

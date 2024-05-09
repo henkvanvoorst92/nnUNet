@@ -69,7 +69,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
 class MynnUNetTrainer(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int,
+                 dataset_json: dict,
+                 unpack_dataset: bool = True,
                  device: torch.device = torch.device('cuda')):
         
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
@@ -215,8 +217,7 @@ class MynnUNetTrainer(nnUNetTrainer):
             self.save_checkpoint_list = [5,10,50,100,250,500] #--> store these checkpoints for analyses
         self.weight_ctline_dice_loss = args.w_cldc
         self.random_gt_sampling = args.random_gt_sampling
-
-
+        self.num_epochs = int(args.num_epochs)
 
     def initialize(self):
         if not self.was_initialized:
