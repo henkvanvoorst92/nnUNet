@@ -1,7 +1,6 @@
 import os
 import socket
 from typing import Union, Optional
-
 import nnunetv2
 import torch.cuda
 import torch.distributed as dist
@@ -135,7 +134,8 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, use_compressed
 
 
 def run_training(dataset_name_or_id: Union[str, int],
-                 configuration: str, fold: Union[int, str],
+                 configuration: str,
+                 fold: Union[int, str],
                  trainer_class_name: str = 'nnUNetTrainer',
                  plans_identifier: str = 'nnUNetPlans',
                  pretrained_weights: Optional[str] = None,
@@ -307,17 +307,27 @@ def run_training_entry():
     else:
         device = torch.device('mps')
 
-    run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.use_compressed, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
+    run_training(dataset_name_or_id = args.dataset_name_or_id,
+                 configuration = args.configuration,
+                 fold = args.fold,
+                 trainer_class_name = args.tr,
+                 plans_identifier = args.p,
+                 pretrained_weights = args.pretrained_weights,
+                 use_compressed_data = args.use_compressed,
+                 export_validation_probabilities = args.npz,
+                 continue_training = args.c,
+                 only_run_validation = args.val,
+                 disable_checkpointing = args.disable_checkpointing,
+                 val_with_best = args.val_best,
                  args = args,
-                 device=device)
-
+                 device = device)
 
 if __name__ == '__main__':
     run_training_entry()
-    args = init_args()
-    print(args)
-    assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
+
+    # args = init_args()
+    # print(args)
+    # assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
     # if args.device == 'cpu':
     #     # let's allow torch to use hella threads
     #     import multiprocessing
