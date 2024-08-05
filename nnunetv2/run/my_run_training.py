@@ -239,7 +239,7 @@ def init_args(args=None):
                         help="Dataset name or ID to train with")
     parser.add_argument('configuration', type=str,
                         help="Configuration that should be trained")
-    parser.add_argument('fold', type=int or str,
+    parser.add_argument('fold', #type=int or str,
                         help='Fold of the 5-fold cross-validation. Should be an int between 0 and 4.')
     parser.add_argument('-tr', type=str, required=False, default='nnUNetTrainer',
                         help='[OPTIONAL] Use this flag to specify a custom trainer. Default: nnUNetTrainer')
