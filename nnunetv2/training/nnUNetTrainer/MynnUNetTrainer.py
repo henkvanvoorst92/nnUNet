@@ -213,11 +213,15 @@ class MynnUNetTrainer(nnUNetTrainer):
         #arguments were added by hvv@stanford.edu
 
         #new self arguments for training
-        if args.save_multiple_checkpoints: #pm change this to parse a list itsel
+        if args.save_multiple_checkpoints: #pm change this to parse a list itself
             self.save_checkpoint_list = [5,10,50,100,250,500] #--> store these checkpoints for analyses
         self.weight_ctline_dice_loss = args.w_cldc
         self.random_gt_sampling = args.random_gt_sampling
         self.num_epochs = int(args.num_epochs)
+
+        #cyclycal learning rate
+
+        #add settings for optimizer
 
     def initialize(self):
         if not self.was_initialized:
