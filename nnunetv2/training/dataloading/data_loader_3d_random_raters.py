@@ -3,10 +3,26 @@ from nnunetv2.training.dataloading.base_data_loader import nnUNetDataLoaderBase
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 
 
-class nnUNetDataLoader3D_random_raters(nnUNetDataLoaderBase):
+class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
+    def __init__(self,
+                 data: nnUNetDataset,
+                 batch_size: int,
+                 patch_size: Union[List[int], Tuple[int, ...], np.ndarray],
+                 final_patch_size: Union[List[int], Tuple[int, ...], np.ndarray],
+                 label_manager: LabelManager,
+                 oversample_foreground_percent: float = 0.0,
+                 sampling_probabilities: Union[List[int], Tuple[int, ...], np.ndarray] = None,
+                 pad_sides: Union[List[int], Tuple[int, ...], np.ndarray] = None,
+                 probabilistic_oversampling: bool = False,
+                 img_gt_sampling_strategy=(False,False,False)):
+        super().__init__(data, batch_size, 1, None,
+                         True, False,
+                         True, sampling_probabilities)
 
-
-
+        self.random_gt_sampling, self.random_img_sampling, self.random_gt_img_sampling = img_gt_sampling_strategy
+        #self.random_gt_sampling: samples ground truth from channel
+        #self.random_img_sampling: samples image from channel
+        #self.random_gt_img_sampling: samples both image and ground truth from channel with same index!
 
     #changed because shape should be different
     def determine_shapes(self):
@@ -33,18 +49,32 @@ class nnUNetDataLoader3D_random_raters(nnUNetDataLoaderBase):
 
             data, seg, properties = self._data.load_case(i)
 
-            #this part is where the random rater is sampled
-            if seg.shape[0]>1:
-                #random sample one of the first channels
-                ix = np.random.choice(np.arange(seg.shape[0]))
-                #fetch the right channel
-                seg = seg[ix:ix+1]
-                #alter the properties --> locations of foreground
-                properties = properties.copy() #don't know if this is required
-                #select the foreground coordinates available for sampling
-                coords = properties['class_locations'][1]
-                select_coords = coords[:,0]==ix
-                properties['class_locations'][1] = coords[select_coords]
+            #sample index
+            if len(data.shape)>3 or len(seg.shape)>3:
+                ix_seg = None
+                if self.random_gt_img_sampling:
+                    if seg.shape[0]!=data.shape[0]:
+                        raise ValueError("Segmentation and image channels do not match!", seg.shape, data.shape)
+                    ix = np.random.choice(np.arange(seg.shape[0]))
+                    ix_seg, ix_img = ix, ix
+                    # fetch the right channel
+                    seg = seg[ix_seg:ix_seg + 1]
+                    data = data[ix_img:ix_img + 1]
+                elif self.random_gt_sampling:
+                    ix_seg = np.random.choice(np.arange(seg.shape[0]))
+                    # fetch the right channel
+                    seg = seg[ix_seg:ix_seg + 1]
+                elif self.random_img_sampling:
+                    ix_img = np.random.choice(np.arange(data.shape[0]))
+                    data = data[ix_img:ix_img + 1]
+
+                if ix_seg is not None:
+                    #alter the properties --> locations of foreground
+                    properties = properties.copy() #don't know if this is required
+                    #select the foreground coordinates available for sampling
+                    coords = properties['class_locations'][1]
+                    select_coords = coords[:,0]==ix_seg
+                    properties['class_locations'][1] = coords[select_coords]
 
             case_properties.append(properties)
 

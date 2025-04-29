@@ -44,7 +44,7 @@ from nnunetv2.training.data_augmentation.custom_transforms.transforms_for_dummy_
     Convert3DTo2DTransform
 from nnunetv2.training.dataloading.data_loader_2d import nnUNetDataLoader2D
 from nnunetv2.training.dataloading.data_loader_3d import nnUNetDataLoader3D
-from nnunetv2.training.dataloading.data_loader_3d_random_raters import nnUNetDataLoader3D_random_raters
+from nnunetv2.training.dataloading.data_loader_3d_random_raters import nnUNetDataLoader3D_channel_sampler
 
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from nnunetv2.training.dataloading.utils import get_case_identifiers, unpack_dataset
@@ -213,11 +213,18 @@ class MynnUNetTrainer(nnUNetTrainer):
         #arguments were added by hvv@stanford.edu
 
         #new self arguments for training
-        if args.save_multiple_checkpoints: #pm change this to parse a list itsel
+        if args.save_multiple_checkpoints: #pm change this to parse a list itself
             self.save_checkpoint_list = [5,10,50,100,250,500] #--> store these checkpoints for analyses
         self.weight_ctline_dice_loss = args.w_cldc
-        self.random_gt_sampling = args.random_gt_sampling
+        random_gt_sampling = args.random_gt_sampling if hasattr(args, 'random_gt_sampling') else False
+        random_img_sampling = args.random_img_sampling if hasattr(args, 'random_img_sampling') else False
+        random_gt_img_pair = args.random_gt_img_pair if hasattr(args, 'random_gt_img_pair') else False
+        self.img_gt_sampling_strategy = (random_gt_sampling, random_img_sampling, random_gt_img_pair)
         self.num_epochs = int(args.num_epochs)
+
+        #cyclycal learning rate
+
+        #add settings for optimizer
 
     def initialize(self):
         if not self.was_initialized:
@@ -706,19 +713,22 @@ class MynnUNetTrainer(nnUNetTrainer):
                                         self.label_manager,
                                         oversample_foreground_percent=self.oversample_foreground_percent,
                                         sampling_probabilities=None, pad_sides=None)
-        elif dim==3 and self.random_gt_sampling:
-            dl_tr = nnUNetDataLoader3D_random_raters(dataset_tr, self.batch_size,
-                                       initial_patch_size,
-                                       self.configuration_manager.patch_size,
-                                       self.label_manager,
-                                       oversample_foreground_percent=self.oversample_foreground_percent,
-                                       sampling_probabilities=None, pad_sides=None)
-            dl_val = nnUNetDataLoader3D_random_raters(dataset_val, self.batch_size,
-                                        self.configuration_manager.patch_size,
-                                        self.configuration_manager.patch_size,
-                                        self.label_manager,
-                                        oversample_foreground_percent=self.oversample_foreground_percent,
-                                        sampling_probabilities=None, pad_sides=None)
+        elif dim==3 and any(self.img_gt_sampling_strategy):
+            dl_tr = nnUNetDataLoader3D_channel_sampler(dataset_tr, self.batch_size,
+                                                       initial_patch_size,
+                                                       self.configuration_manager.patch_size,
+                                                       self.label_manager,
+                                                       oversample_foreground_percent=self.oversample_foreground_percent,
+                                                       sampling_probabilities=None, pad_sides=None,
+                                                        img_gt_sampling_strategy=self.img_gt_sampling_strategy
+                                                       )
+            dl_val = nnUNetDataLoader3D_channel_sampler(dataset_val, self.batch_size,
+                                                        self.configuration_manager.patch_size,
+                                                        self.configuration_manager.patch_size,
+                                                        self.label_manager,
+                                                        oversample_foreground_percent=self.oversample_foreground_percent,
+                                                        sampling_probabilities=None, pad_sides=None,
+                                                        img_gt_sampling_strategy=self.img_gt_sampling_strategy)
         elif dim==3:
             dl_tr = nnUNetDataLoader3D(dataset_tr, self.batch_size,
                                        initial_patch_size,

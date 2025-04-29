@@ -280,6 +280,11 @@ def init_args(args=None):
                         help='[OPTIONAL] Weight of the centerline dice loss, if >0 uses centerline dice when training')
     parser.add_argument('--random_gt_sampling', action='store_true', required=False,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
+    parser.add_argument('--random_img_sampling', action='store_true', required=False,
+                        help='[OPTIONAL] Sample image to use from channel dim of sitk.Image, if multiple images (_0000, _0001, etc) samples the same channel for each')
+    parser.add_argument('--random_gt_img_pair', action='store_true', required=False,
+                        help='[OPTIONAL] Sample image and to use from channel dim of sitk.Image')
+
     parser.add_argument('--num_epochs', default=1000,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
 
