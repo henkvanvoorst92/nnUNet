@@ -222,10 +222,6 @@ class MynnUNetTrainer(nnUNetTrainer):
         self.img_gt_sampling_strategy = (random_gt_sampling, random_img_sampling, random_gt_img_pair)
         self.num_epochs = int(args.num_epochs)
 
-        #cyclycal learning rate
-
-        #add settings for optimizer
-
     def initialize(self):
         if not self.was_initialized:
             self.num_input_channels = determine_num_input_channels(self.plans_manager, self.configuration_manager,
