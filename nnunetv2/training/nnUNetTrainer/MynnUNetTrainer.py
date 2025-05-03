@@ -709,7 +709,7 @@ class MynnUNetTrainer(nnUNetTrainer):
                                         self.label_manager,
                                         oversample_foreground_percent=self.oversample_foreground_percent,
                                         sampling_probabilities=None, pad_sides=None)
-        elif dim==3 and any(self.img_gt_sampling_strategy):
+        elif dim==3 and self.adjusted_sampling:
             dl_tr = nnUNetDataLoader3D_channel_sampler(dataset_tr, self.batch_size,
                                                        initial_patch_size,
                                                        self.configuration_manager.patch_size,

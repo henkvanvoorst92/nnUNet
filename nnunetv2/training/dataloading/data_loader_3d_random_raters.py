@@ -14,15 +14,16 @@ class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
                  sampling_probabilities: Union[List[int], Tuple[int, ...], np.ndarray] = None,
                  pad_sides: Union[List[int], Tuple[int, ...], np.ndarray] = None,
                  probabilistic_oversampling: bool = False,
-                 img_gt_sampling_strategy=(False,False,False)):
+                 img_gt_sampling_strategy=(False,False,False, None, None, None)):
         super().__init__(data, batch_size, 1, None,
                          True, False,
                          True, sampling_probabilities)
 
-        self.random_gt_sampling, self.random_img_sampling, self.random_gt_img_sampling = img_gt_sampling_strategy
+        self.random_gt_sampling, self.random_img_sampling, self.random_gt_img_sampling, self.ix_seg, self.ix_img = img_gt_sampling_strategy
         #self.random_gt_sampling: samples ground truth from channel
         #self.random_img_sampling: samples image from channel
         #self.random_gt_img_sampling: samples both image and ground truth from channel with same index!
+        #self.ix_seg and self.ix_img: index of the segmentation and image channel if predifined (overrules random sampling)
 
     #changed because shape should be different
     def determine_shapes(self):
@@ -56,16 +57,19 @@ class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
                     if seg.shape[0]!=data.shape[0]:
                         raise ValueError("Segmentation and image channels do not match!", seg.shape, data.shape)
                     ix = np.random.choice(np.arange(seg.shape[0]))
-                    ix_seg, ix_img = ix, ix
+                    ix_seg = ix if self.ix_seg is None else self.ix_seg
+                    ix_img = ix if self.ix_img is None else self.ix_img
                     # fetch the right channel
                     seg = seg[ix_seg:ix_seg + 1]
                     data = data[ix_img:ix_img + 1]
                 elif self.random_gt_sampling:
-                    ix_seg = np.random.choice(np.arange(seg.shape[0]))
+                    ix = np.random.choice(np.arange(seg.shape[0]))
+                    ix_seg = ix if self.ix_seg is None else self.ix_seg
                     # fetch the right channel
                     seg = seg[ix_seg:ix_seg + 1]
                 elif self.random_img_sampling:
-                    ix_img = np.random.choice(np.arange(data.shape[0]))
+                    ix = np.random.choice(np.arange(data.shape[0]))
+                    ix_img = ix if self.ix_img is None else self.ix_img
                     data = data[ix_img:ix_img + 1]
 
                 if ix_seg is not None:
