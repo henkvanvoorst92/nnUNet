@@ -14,7 +14,8 @@ class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
                  sampling_probabilities: Union[List[int], Tuple[int, ...], np.ndarray] = None,
                  pad_sides: Union[List[int], Tuple[int, ...], np.ndarray] = None,
                  probabilistic_oversampling: bool = False,
-                 img_gt_sampling_strategy=(False,False,False, None, None, None)):
+                 multichannel_val_loader=False,
+                 img_gt_sampling_strategy=(False,False,False, None, None)):
         super().__init__(data, batch_size, 1, None,
                          True, False,
                          True, sampling_probabilities)
@@ -24,20 +25,40 @@ class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
         #self.random_img_sampling: samples image from channel
         #self.random_gt_img_sampling: samples both image and ground truth from channel with same index!
         #self.ix_seg and self.ix_img: index of the segmentation and image channel if predifined (overrules random sampling)
+        self.multichannel_val_loader = multichannel_val_loader #True if validation should be performed on all channels per ID
 
     #changed because shape should be different
     def determine_shapes(self):
+
         data, seg, properties = self._data.load_case(self.indices[0])
         num_color_channels = data.shape[0]
 
         data_shape = (self.batch_size, num_color_channels, *self.patch_size)
         seg_shape = (self.batch_size, 1, *self.patch_size)
+
         return data_shape, seg_shape
 
     #write a funciton to first random sample a channel
 
-    def generate_train_batch(self):
-        selected_keys = self.get_indices()
+    def multichannel_validation_batch(self, selected_keys):
+        #implement loading of all channels in a batch for validation
+
+        data_all = np.zeros(self.data_shape, dtype=np.float32)
+        seg_all = np.zeros(self.seg_shape, dtype=np.int16)
+        case_properties = []
+
+        for j, i in enumerate(selected_keys):
+            # oversampling foreground will improve stability of model training, especially if many patches are empty
+            # (Lung for example)
+            force_fg = self.get_do_oversample(j)
+
+            data, seg, properties = self._data.load_case(i)
+            d0, s0 = data.shape[0], seg.shape[0]
+
+        return None
+
+
+    def multichannel_train_sampling(self, selected_keys):
         # preallocate memory for data and seg
         data_all = np.zeros(self.data_shape, dtype=np.float32)
         seg_all = np.zeros(self.seg_shape, dtype=np.int16)
@@ -111,6 +132,18 @@ class nnUNetDataLoader3D_channel_sampler(nnUNetDataLoaderBase):
             seg_all[j] = np.pad(seg, padding, 'constant', constant_values=-1)
 
         return {'data': data_all, 'seg': seg_all, 'properties': case_properties, 'keys': selected_keys}
+
+    def generate_train_batch(self):
+        selected_keys = self.get_indices()
+
+        if self.multichannel_val_loader:
+            output = self.multichannel_validation_batch(selected_keys)
+        else:
+            output = self.multichannel_train_sampling(selected_keys)
+
+        return output
+
+
 
 
 if __name__ == '__main__':

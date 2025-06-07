@@ -72,6 +72,7 @@ class MynnUNetTrainer(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int,
                  dataset_json: dict,
                  unpack_dataset: bool = True,
+                 model_addname=None,
                  device: torch.device = torch.device('cuda')):
         
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
@@ -125,11 +126,19 @@ class MynnUNetTrainer(nnUNetTrainer):
 
         ### Setting all the folder names. We need to make sure things don't crash in case we are just running
         # inference and some of the folders may not be defined!
+
         self.preprocessed_dataset_folder_base = join(nnUNet_preprocessed, self.plans_manager.dataset_name) \
             if nnUNet_preprocessed is not None else None
-        self.output_folder_base = join(nnUNet_results, self.plans_manager.dataset_name,
-                                       self.__class__.__name__ + '__' + self.plans_manager.plans_name + "__" + configuration) \
-            if nnUNet_results is not None else None
+
+        if model_addname is None:
+            self.output_folder_base = join(nnUNet_results, self.plans_manager.dataset_name,
+                                           self.__class__.__name__ + '__' + self.plans_manager.plans_name + "__" + configuration) \
+                if nnUNet_results is not None else None
+        else:
+            self.output_folder_base = join(nnUNet_results, self.plans_manager.dataset_name,
+                                           self.__class__.__name__ + model_addname + '__' + self.plans_manager.plans_name + "__" + configuration) \
+                if nnUNet_results is not None else None
+
         self.output_folder = join(self.output_folder_base, f'fold_{fold}')
 
         self.preprocessed_dataset_folder = join(self.preprocessed_dataset_folder_base,

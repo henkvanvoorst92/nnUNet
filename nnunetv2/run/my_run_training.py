@@ -146,6 +146,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  only_run_validation: bool = False,
                  disable_checkpointing: bool = False,
                  val_with_best: bool = False,
+                 model_addname: Optional[str] = None,
                  args=None,
                  device: torch.device = torch.device('cuda')):
 
@@ -194,7 +195,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  join=True)
     else:
         nnunet_trainer = get_trainer_from_args(dataset_name_or_id, configuration, fold, trainer_class_name,
-                                               plans_identifier, use_compressed_data, device=device)
+                                               plans_identifier, use_compressed_data, model_addname, device=device)
 
         if 'My' in trainer_class_name:
             nnunet_trainer.add_args(args)
@@ -324,6 +325,7 @@ def run_training_entry():
                  only_run_validation = args.val,
                  disable_checkpointing = args.disable_checkpointing,
                  val_with_best = args.val_best,
+                 model_addname=args.model_addname if hasattr(args, 'model_addname') else None,
                  args = args,
                  device = device)
 

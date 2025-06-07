@@ -136,9 +136,35 @@ class DefaultPreprocessor(object):
         else:
             seg = None
 
-        data, seg = self.run_case_npy(data, seg, data_properties, plans_manager, configuration_manager,
-                                      dataset_json)
+
+        if len(data.shape)==3:
+            data, seg = self.run_case_npy(data, seg, data_properties, plans_manager, configuration_manager,
+                                          dataset_json)
+        else:
+            # henkvanvoorst92 adjustment
+            #mutliple channels for image preprocessed
+            #el:
+
+            data_out, seg_out = [], []
+            for i in range(data.shape[0]):
+                data_inp = np.expand_dims(data[i], 0)
+                if len(data.shape) == len(seg.shape):
+                    seg_inp = np.expand_dims(seg[i], 0)
+                else:
+                    seg_inp = seg
+
+                d, s = self.run_case_npy(data_inp, seg_inp,
+                                         data_properties, plans_manager,
+                                         configuration_manager,
+                                         dataset_json)
+                data_out.append(d)
+                seg_out.append(s)
+            data = np.concatenate(data_out, axis=0)
+            seg = np.concatenate(seg_out, axis=0)
+
         return data, seg, data_properties
+
+
 
     def run_case_save(self, output_filename_truncated: str, image_files: List[str], seg_file: str,
                       plans_manager: PlansManager, configuration_manager: ConfigurationManager,
@@ -147,6 +173,7 @@ class DefaultPreprocessor(object):
         # print('dtypes', data.dtype, seg.dtype)
         np.savez_compressed(output_filename_truncated + '.npz', data=data, seg=seg)
         write_pickle(properties, output_filename_truncated + '.pkl')
+
 
     @staticmethod
     def _sample_foreground_locations(seg: np.ndarray, classes_or_regions: Union[List[int], List[Tuple[int, ...]]],

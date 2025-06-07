@@ -106,8 +106,7 @@ def preprocess_entry():
         np = args.np
     preprocess(args.d, args.plans_name, configurations=args.c, num_processes=np, verbose=args.verbose)
 
-
-def plan_and_preprocess_entry():
+def default_preprocess_args():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', nargs='+', type=int,
@@ -178,6 +177,12 @@ def plan_and_preprocess_entry():
                         help='Set this to print a lot of stuff. Useful for debugging. Will disable progress bar! '
                              'Recommended for cluster environments')
     args = parser.parse_args()
+    return args
+
+
+def plan_and_preprocess_entry():
+
+    args = default_preprocess_args()
 
     # fingerprint extraction
     print("Fingerprint extraction...")
@@ -199,6 +204,28 @@ def plan_and_preprocess_entry():
         print('Preprocessing...')
         preprocess(args.d, plans_identifier, args.c, np, args.verbose)
 
+
+def my_plan_and_preprocess_entry(args):
+
+    # fingerprint extraction
+    print("Fingerprint extraction...")
+    extract_fingerprints(args.d, args.fpe, args.npfp, args.verify_dataset_integrity, args.clean, args.verbose)
+
+    # experiment planning
+    print('Experiment planning...')
+    plans_identifier = plan_experiments(args.d, args.pl, args.gpu_memory_target, args.preprocessor_name,
+                                        args.overwrite_target_spacing, args.overwrite_plans_name)
+
+    # manage default np
+    if args.np is None:
+        default_np = {"2d": 8, "3d_fullres": 4, "3d_lowres": 8}
+        np = [default_np[c] if c in default_np.keys() else 4 for c in args.c]
+    else:
+        np = args.np
+    # preprocessing
+    if not args.no_pp:
+        print('Preprocessing...')
+        preprocess(args.d, plans_identifier, args.c, np, args.verbose)
 
 if __name__ == '__main__':
     plan_and_preprocess_entry()
