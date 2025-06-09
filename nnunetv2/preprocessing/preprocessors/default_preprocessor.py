@@ -39,7 +39,7 @@ class DefaultPreprocessor(object):
 
     def run_case_npy(self, data: np.ndarray, seg: Union[np.ndarray, None], properties: dict,
                      plans_manager: PlansManager, configuration_manager: ConfigurationManager,
-                     dataset_json: Union[dict, str]):
+                     dataset_json: Union[dict, str], skip_cropping=False):
         # let's not mess up the inputs!
         data = data.astype(np.float32)  # this creates a copy
         if seg is not None:
@@ -58,8 +58,12 @@ class DefaultPreprocessor(object):
         shape_before_cropping = data.shape[1:]
         properties['shape_before_cropping'] = shape_before_cropping
         # this command will generate a segmentation. This is important because of the nonzero mask which we may need
-        data, seg, bbox = crop_to_nonzero(data, seg)
-        properties['bbox_used_for_cropping'] = bbox
+        if skip_cropping:
+            #no cropping
+            properties['bbox_used_for_cropping'] = [[0,data.shape[1]],[0,data.shape[2]],[0,data.shape[3]]]
+        else:
+            data, seg, bbox = crop_to_nonzero(data, seg)
+            properties['bbox_used_for_cropping'] = bbox
         # print(data.shape, seg.shape)
         properties['shape_after_cropping_and_before_resampling'] = data.shape[1:]
 
@@ -143,8 +147,6 @@ class DefaultPreprocessor(object):
         else:
             # henkvanvoorst92 adjustment
             #mutliple channels for image preprocessed
-            #el:
-
             data_out, seg_out = [], []
             for i in range(data.shape[0]):
                 data_inp = np.expand_dims(data[i], 0)
@@ -156,7 +158,8 @@ class DefaultPreprocessor(object):
                 d, s = self.run_case_npy(data_inp, seg_inp,
                                          data_properties, plans_manager,
                                          configuration_manager,
-                                         dataset_json)
+                                         dataset_json, skip_cropping=True)
+                #print(d.shape, s.shape)
                 data_out.append(d)
                 seg_out.append(s)
             data = np.concatenate(data_out, axis=0)

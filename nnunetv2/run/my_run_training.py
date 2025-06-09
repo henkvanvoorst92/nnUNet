@@ -32,6 +32,7 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
                           trainer_name: str = 'nnUNetTrainer',
                           plans_identifier: str = 'nnUNetPlans',
                           use_compressed: bool = False,
+                          model_addname=None,
                           device: torch.device = torch.device('cuda')):
     # load nnunet class and do sanity checks
     nnunet_trainer = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
@@ -61,7 +62,10 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
     plans = load_json(plans_file)
     dataset_json = load_json(join(preprocessed_dataset_folder_base, 'dataset.json'))
     nnunet_trainer = nnunet_trainer(plans=plans, configuration=configuration, fold=fold,
-                                    dataset_json=dataset_json, unpack_dataset=not use_compressed, device=device)
+                                    dataset_json=dataset_json,
+                                    unpack_dataset=not use_compressed,
+                                    model_addname=model_addname,
+                                    device=device)
     return nnunet_trainer
 
 
@@ -285,9 +289,14 @@ def init_args(args=None):
                         help='[OPTIONAL] Sample image to use from channel dim of sitk.Image, if multiple images (_0000, _0001, etc) samples the same channel for each')
     parser.add_argument('--random_gt_img_pair', action='store_true', required=False,
                         help='[OPTIONAL] Sample image and to use from channel dim of sitk.Image')
+    parser.add_argument('--possible_channels', nargs='+', default=None, type=int, required=False,
+                        help='what channels to use during training (if multichannel images loaded for channel sampling)')
 
     parser.add_argument('--num_epochs', default=1000,
                         help='[OPTIONAL] Sample ground truth from multi-channel ground truth input label image')
+
+    parser.add_argument('--model_addname', default=None, type=str, required=False,
+                        help='for similar experiments on same adata provide different model_addname to create separate model folder (with folds init)')
 
     if is_notebook():
         print("Detected notebook environment, using default argument values.")

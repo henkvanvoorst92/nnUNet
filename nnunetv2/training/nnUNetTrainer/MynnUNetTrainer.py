@@ -216,6 +216,7 @@ class MynnUNetTrainer(nnUNetTrainer):
         self.patch_size = None #--> parse an args where default patch size can be defined
         self.save_checkpoint_list = [] #--> store these checkpoints for analyses
         self.weight_ctline_dice_loss = 0.0 #-->
+        self.adjusted_sampling = False
 
     ###THESE are added arguments for this specific class
     def add_args(self,args):
@@ -228,7 +229,13 @@ class MynnUNetTrainer(nnUNetTrainer):
         random_gt_sampling = args.random_gt_sampling if hasattr(args, 'random_gt_sampling') else False
         random_img_sampling = args.random_img_sampling if hasattr(args, 'random_img_sampling') else False
         random_gt_img_pair = args.random_gt_img_pair if hasattr(args, 'random_gt_img_pair') else False
-        self.img_gt_sampling_strategy = (random_gt_sampling, random_img_sampling, random_gt_img_pair)
+        ix_seg = args.ix_seg if hasattr(args, 'ix_seg') else None
+        ix_img = args.ix_img if hasattr(args, 'ix_img') else None
+        possible_channels = args.possible_channels if hasattr(args, 'possible_channels') else None
+
+        self.img_gt_sampling_strategy =  (random_gt_sampling, random_img_sampling, random_gt_img_pair,
+                                          ix_seg, ix_img, possible_channels)
+        self.adjusted_sampling = any(self.img_gt_sampling_strategy[:3]) or ix_seg is not None or ix_img is not None
         self.num_epochs = int(args.num_epochs)
 
     def initialize(self):
@@ -719,6 +726,7 @@ class MynnUNetTrainer(nnUNetTrainer):
                                         oversample_foreground_percent=self.oversample_foreground_percent,
                                         sampling_probabilities=None, pad_sides=None)
         elif dim==3 and self.adjusted_sampling:
+            #before jun 6 there was a working version of this
             dl_tr = nnUNetDataLoader3D_channel_sampler(dataset_tr, self.batch_size,
                                                        initial_patch_size,
                                                        self.configuration_manager.patch_size,
@@ -727,13 +735,17 @@ class MynnUNetTrainer(nnUNetTrainer):
                                                        sampling_probabilities=None, pad_sides=None,
                                                         img_gt_sampling_strategy=self.img_gt_sampling_strategy
                                                        )
-            dl_val = nnUNetDataLoader3D_channel_sampler(dataset_val, self.batch_size,
+
+            dl_val = nnUNetDataLoader3D_channel_sampler(dataset_val, 1,
                                                         self.configuration_manager.patch_size,
                                                         self.configuration_manager.patch_size,
                                                         self.label_manager,
                                                         oversample_foreground_percent=self.oversample_foreground_percent,
                                                         sampling_probabilities=None, pad_sides=None,
-                                                        img_gt_sampling_strategy=self.img_gt_sampling_strategy)
+                                                        img_gt_sampling_strategy=self.img_gt_sampling_strategy,
+                                                        multichannel_val_loader=True #will load all cases per ID for validation
+                                                        )
+
         elif dim==3:
             dl_tr = nnUNetDataLoader3D(dataset_tr, self.batch_size,
                                        initial_patch_size,
@@ -741,6 +753,7 @@ class MynnUNetTrainer(nnUNetTrainer):
                                        self.label_manager,
                                        oversample_foreground_percent=self.oversample_foreground_percent,
                                        sampling_probabilities=None, pad_sides=None)
+
             dl_val = nnUNetDataLoader3D(dataset_val, self.batch_size,
                                         self.configuration_manager.patch_size,
                                         self.configuration_manager.patch_size,
