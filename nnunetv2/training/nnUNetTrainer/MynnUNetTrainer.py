@@ -240,7 +240,8 @@ class MynnUNetTrainer(nnUNetTrainer):
 
     def initialize(self):
         if not self.was_initialized:
-            self.num_input_channels = determine_num_input_channels(self.plans_manager, self.configuration_manager,
+            self.num_input_channels = determine_num_input_channels(self.plans_manager,
+                                                                   self.configuration_manager,
                                                                    self.dataset_json)
 
             self.network = self.build_network_architecture(
@@ -537,9 +538,15 @@ class MynnUNetTrainer(nnUNetTrainer):
             self.print_to_log_file('These are the global plan.json settings:\n', dct, '\n', add_timestamp=False)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
+        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr,
+                                    weight_decay=self.weight_decay,
                                     momentum=0.99, nesterov=True)
-        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
+        #print('optimizer',len(optimizer), optimizer)
+        #print('ilr',self.initial_lr)
+        #print('epochs',self.num_epochs)
+        lr_scheduler = PolyLRScheduler(optimizer=optimizer,
+                                       initial_lr=self.initial_lr,
+                                       max_steps=self.num_epochs)
         return optimizer, lr_scheduler
 
     def plot_network_architecture(self):
