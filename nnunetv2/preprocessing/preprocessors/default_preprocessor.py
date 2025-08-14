@@ -150,10 +150,13 @@ class DefaultPreprocessor(object):
             data_out, seg_out = [], []
             for i in range(data.shape[0]):
                 data_inp = np.expand_dims(data[i], 0)
-                if len(data.shape) == len(seg.shape):
-                    seg_inp = np.expand_dims(seg[i], 0)
+                if seg is None:
+                    seg_inp = np.full_like(data_inp, np.nan) #hacky way to let normalization run (needs seg of same shape as data)
                 else:
-                    seg_inp = seg
+                    if len(data.shape) == len(seg.shape):
+                        seg_inp = np.expand_dims(seg[i], 0)
+                    else:
+                        seg_inp = seg
 
                 d, s = self.run_case_npy(data_inp, seg_inp,
                                          data_properties, plans_manager,
