@@ -1,177 +1,14 @@
 
 import os
 import itertools
-import random
 import multiprocessing as mp
 import pandas as pd
 import ast
 import numpy as np
-import SimpleITK as sitk
-from tqdm import tqdm
 import torch
-from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
-import argparse
-import yaml
-
-def load_yaml_config(yaml_file):
-    with open(yaml_file, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
-
-def update_args_with_yaml(args, yaml_config):
-    if args is None:
-        args = argparse.Namespace()
-
-    for key, value in yaml_config.items():
-        if isinstance(value, dict):
-            # Store the entire dictionary as an attribute
-            setattr(args, key, value)
-            # Also flatten nested dictionary keys
-            for sub_key, sub_value in value.items():
-                arg_key = f"{key}_{sub_key}"
-                setattr(args, arg_key, sub_value)
-        else:
-            setattr(args, key, value)
-    return args
-
-def init_args(args=None, print_args=True):
-    # Create the parser
-    parser = argparse.ArgumentParser(
-        description='')
-
-    # Required positional arguments
-    parser.add_argument('--yml_args', type=str, default=None,
-                        help='If a path to a yml file is defined this is used to override all other args')
-    parser.add_argument('--job', default=None,
-                        help='list of job numbers to process')
-
-    args = parser.parse_args(args)
-
-    return args
-
-
-def load_segmentation_model(p_seg_model, fold,
-                            tile_step_size=.5,
-                            checkpoint_name = 'checkpoint_final.pth',
-                            gpu_id=None):
-    if p_seg_model is not None:
-        if os.path.exists(p_seg_model) and os.path.isdir(p_seg_model):
-
-
-            predictor = nnUNetPredictor(
-                tile_step_size=tile_step_size,
-                use_gaussian=True,
-                use_mirroring=True,
-                #perform_everything_on_gpu=True,
-                device=torch.device('cuda', 0) if gpu_id is None else gpu_id,
-                verbose=False,
-                verbose_preprocessing=False,
-                allow_tqdm=False
-            )
-            # initializes the network architecture, loads the checkpoint
-            predictor.initialize_from_trained_model_folder(
-                p_seg_model,
-                use_folds=fold,
-                checkpoint_name=checkpoint_name
-            )
-        else:
-            print('No model found for using hence no inference possible')
-        return predictor
-
-
-def image_or_path_load(img_or_path):
-    if isinstance(img_or_path, sitk.Image):
-        out = sitk.Image(img_or_path)
-    elif isinstance(img_or_path, str):
-        if os.path.exists(img_or_path):
-            out = sitk.ReadImage(img_or_path)
-        else:
-            out = None
-            #raise ValueError('does not exist:',img_or_path)
-    else:
-        out = None
-        #raise ValueError("img_or_path is not sitk.Image or a path",img_or_path)
-    if out is not None:
-        out = sitk.Cast(out, sitk.sitkInt16)
-    return out
-
-def chunk_ids(ids, n_jobs):
-    """
-    Split a list of IDs into almost equal-sized chunks.
-
-    Parameters:
-        ids (list): The list of IDs to chunk.
-        n_jobs (int): The number of chunks to create.
-
-    Returns:
-        list: A list of chunks, where each chunk is a list of IDs.
-    """
-    chunk_size = len(ids) // n_jobs
-    remainder = len(ids) % n_jobs
-
-    random.shuffle(ids)
-
-    chunks = []
-    start = 0
-    for i in range(n_jobs):
-        # Distribute the remainder across the first few chunks
-        end = start + chunk_size + (1 if i < remainder else 0)
-        chunks.append(ids[start:end])
-        start = end
-
-    return chunks
-
-def assign_job_numbers(df, num_jobs):
-    num_rows = len(df)
-    jobs_per_group = num_rows // num_jobs  # Number of times each job number appears
-    remainder = num_rows % num_jobs  # If rows are not perfectly divisible
-
-    job_numbers = []
-
-    for i in range(num_jobs):
-        job_numbers.extend([i] * jobs_per_group)
-
-    # Distribute remainder evenly
-    job_numbers.extend(np.random.choice(range(num_jobs), remainder, replace=False))
-
-    np.random.shuffle(job_numbers)  # Shuffle job numbers
-
-    df["job"] = job_numbers
-    return df
-
-def create_input_file(args, n_jobs=10, image_dirs=['NCCT-3chan', 'dwi'],
-                      input_file=None, save=True, ID_splitter='_'):
-    dir_inp = os.path.join(args.p_out, args.image_dir)
-    IDs = list(set([f.split(ID_splitter)[0] for f in os.listdir(dir_inp) if '.nii' in f]))
-
-    # find the local files
-    dct = {}
-    na_imd = []
-    for imd in image_dirs:
-        tmpd = {}
-        p_dir = os.path.join(args.p_out, imd)
-        if not os.path.exists(p_dir):
-            na_imd.append(imd)
-            continue
-        for f in os.listdir(p_dir):
-            if '.nii' in f and not ('_0001' in f or '_0002' in f):
-                ID = f.split('.')[0].split(ID_splitter)[0]
-                if ID in IDs:
-                    file = os.path.join(p_dir, f)
-                    tmpd[ID] = file if os.path.exists(file) else None
-        dct[imd] = tmpd
-    df = pd.DataFrame.from_dict(dct)
-    for imd in na_imd:
-        df[imd] = None
-    df = assign_job_numbers(df, n_jobs)
-    if save:
-        df.to_excel(input_file)
-
-    return df
-
-
-def fetch_IDs(dir_inp):
-    return list(set([f.split('_')[0] for f in os.listdir(dir_inp) if '.nii' in f]))
+from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_config
+from nnunetv2.my_utils.utils import image_or_path_load, load_segmentation_model, chunk_ids, assign_job_numbers, \
+    create_input_file, fetch_IDs, nnunet_input_output_files_list
 
 def segmentation_worker(inputs):
 
@@ -236,29 +73,6 @@ def segmentation_worker(inputs):
     #             seg = SEGP.VSEGP.mask_adjust_seg(p_seg, mask)
     #             sitk.WriteImage(np2sitk(seg, mask), p_seg)
 
-
-def nnunet_input_output_files_list(IDs, channels, dir_in, dir_out, overwrite=False, ID_splitter='_'):
-
-    files_in = []
-    files_out = []
-
-    for ID in IDs:
-        ID_files = []
-        for chan in channels:
-            for f in os.listdir(dir_in):
-                #print(f, ID, chan, '.nii' in f, chan in f)
-                if '.nii' in f:
-                    if str(ID)==f.split(ID_splitter)[0] and chan in f:
-                        ID_files.append(os.path.join(dir_in, f))
-        if len(ID_files) == len(channels):
-            f_out = os.path.join(dir_out, f'{ID}.nii.gz')
-            if not os.path.exists(f_out) or overwrite:
-                files_in.append(ID_files)
-                files_out.append(f_out)
-        else:
-            print(f"Not all channels found for ID {ID}\n Found: {ID_files}, expected: {channels}")
-
-    return files_in, files_out
 
 def main_segmentation_processor(job_inputs):
 
@@ -336,6 +150,10 @@ if __name__ == "__main__":
     pp_jobs = []
     for model, channels in args.models.items():
         model_dir = os.path.join(args.model_dir, model)
+        m = os.path.basename(model_dir)
+        if 'MynnUNetTrainer' in m:
+            name = m.split('nnUNetPlans')[0].split('MynnUNetTrainer')[1].replace('__','')
+            addname = name+addname
 
         subdir_out = '{}_{}{}'.format(args.image_dir, model.split(os.sep)[0], addname)
         for job in range(n_jobs):
@@ -360,7 +178,6 @@ if __name__ == "__main__":
             else:
                 inp = (args.yml_args, files_in, files_out, model_dir, gpu_id)
                 job_inputs.append(inp)
-
 
     if len(job_inputs) > 0:
         print('Starting multiprocessing with {} jobs'.format(len(job_inputs)))
