@@ -10,6 +10,7 @@ from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_
 from nnunetv2.my_utils.utils import image_or_path_load, load_segmentation_model, chunk_ids, assign_job_numbers, \
     create_input_file, fetch_IDs, nnunet_input_output_files_list
 
+#torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 def segmentation_worker(inputs):
 
     yml_file, input_files_or_dir, output_files_or_dir, model_dir, gpu_id = inputs

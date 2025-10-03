@@ -10,6 +10,8 @@ from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 import argparse
 import yaml
 from typing import Dict
+from tqdm import tqdm
+#torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 
 def load_yaml_config(yaml_file):
     with open(yaml_file, 'r') as file:
@@ -42,6 +44,10 @@ def init_args(args=None, print_args=True):
                         help='If a path to a yml file is defined this is used to override all other args')
     parser.add_argument('--job', default=None,
                         help='list of job numbers to process')
+    parser.add_argument('--experiment', default=None,
+                        help='for validation proc experiment name in Train folder')
+    parser.add_argument('--fold', default=None,
+                        help='for separate jobs per fold')
 
     args = parser.parse_args(args)
 
@@ -170,22 +176,6 @@ def create_input_file(args, n_jobs=10, image_dirs=['NCCT-3chan', 'dwi'],
 def fetch_IDs(dir_inp):
     return list(set([f.split('_')[0] for f in os.listdir(dir_inp) if '.nii' in f]))
 
-def image_or_path_load(img_or_path):
-    if isinstance(img_or_path, sitk.Image):
-        out = sitk.Image(img_or_path)
-    elif isinstance(img_or_path, str):
-        if os.path.exists(img_or_path):
-            out = sitk.ReadImage(img_or_path)
-        else:
-            out = None
-            #raise ValueError('does not exist:',img_or_path)
-    else:
-        out = None
-        #raise ValueError("img_or_path is not sitk.Image or a path",img_or_path)
-    if out is not None:
-        out = sitk.Cast(out, sitk.sitkInt16)
-    return out
-
 def nnunet_input_output_files_list(IDs, channels, dir_in, dir_out, overwrite=False, ID_splitter='_'):
 
     files_in = []
@@ -241,15 +231,18 @@ def get_nnUNet_paths(nnunet_dir, dataset):
     Returns:
         dict: A dictionary containing the paths for 'preprocessed' and 'trained_models'.
     """
+    raw_path = os.path.join(nnunet_dir, 'nnUNet_raw', dataset)
     preprocessed_path = os.path.join(nnunet_dir, 'nnUNet_preprocessed', dataset)
     trained_models_path = os.path.join(nnunet_dir, 'nnUNet_trained_models', dataset)
 
+    if not os.path.exists(raw_path):
+        raise FileNotFoundError(f"Raw directory not found in {nnunet_dir}")
     if not os.path.exists(preprocessed_path):
-        raise FileNotFoundError(f"Preprocessed directory not found in {nnunet_dir}")
+        raise FileNotFoundError(f"Raw directory not found in {preprocessed_path}")
     if not os.path.exists(trained_models_path):
         raise FileNotFoundError(f"Trained models directory not found in {nnunet_dir}")
 
-    return preprocessed_path, trained_models_path
+    return raw_path, preprocessed_path, trained_models_path
 
 def get_experiments(train_dir):
     """
@@ -266,12 +259,17 @@ def get_experiments(train_dir):
         raise FileNotFoundError(f"Train directory not found: {train_dir}")
 
     for folder in os.listdir(train_dir):
+        parts = folder.split("__")
         if folder.startswith("MynnUNetTrainer") and "__" in folder:
-            parts = folder.split("__")
+
             if len(parts) > 1:
                 key = parts[0].split("_")[-1]  # Extract the key (e.g., 't2')
-                experiments[key] = folder
-
+                experiments[key] = os.path.join(train_dir,folder)
+        elif folder.startswith("nnUNetTrainer"):
+            if parts[1] != 'nnUNetPlans':
+                experiments['t0_'+parts[1]] = os.path.join(train_dir,folder)
+            else:
+                experiments['t0'] = os.path.join(train_dir,folder)
     return experiments
 
 def get_path_dict(path, ID_splitter='_', filext='.graphml', incl_str=''):
@@ -374,3 +372,60 @@ class NumpyLoader:
             print(f"File with ID {ID} not found.")
             return None
 
+def load_segmentation_model(p_seg_model, fold,
+                            tile_step_size=.5,
+                            checkpoint_name = 'checkpoint_final.pth',
+                            gpu_id=None):
+    if p_seg_model is not None:
+        if os.path.exists(p_seg_model) and os.path.isdir(p_seg_model):
+
+            predictor = nnUNetPredictor(
+                tile_step_size=tile_step_size,
+                use_gaussian=True,
+                use_mirroring=True,
+                #perform_everything_on_gpu=True,
+                device=torch.device('cuda', 0) if gpu_id is None else gpu_id,
+                verbose=False,
+                verbose_preprocessing=False,
+                allow_tqdm=False
+            )
+            # initializes the network architecture, loads the checkpoint
+            predictor.initialize_from_trained_model_folder(
+                p_seg_model,
+                use_folds=fold,
+                checkpoint_name=checkpoint_name
+            )
+        else:
+            print('No model found for using hence no inference possible')
+        return predictor
+
+def image_or_path_load(img_or_path):
+    if isinstance(img_or_path, sitk.Image):
+        out = sitk.Image(img_or_path)
+    elif isinstance(img_or_path, str):
+        if os.path.exists(img_or_path):
+            out = sitk.ReadImage(img_or_path)
+        else:
+            out = None
+            #raise ValueError('does not exist:',img_or_path)
+    else:
+        out = None
+        #raise ValueError("img_or_path is not sitk.Image or a path",img_or_path)
+    if out is not None:
+        out = sitk.Cast(out, sitk.sitkInt16)
+    return out
+
+def combine_excel_files(p_dir, incl_string='.xlsx'):
+    return pd.concat([pd.read_excel(os.path.join(p_dir, f)) for f in tqdm(os.listdir(p_dir)) if incl_string in f], axis=0)
+
+def rename_result_columns(data, rename_dct=None):
+
+    if rename_dct is None:
+        rename_dct = {
+            'Class': {0:'Background', 1:'Artery', 2:'Vein'}
+        }
+    for col, mapping in rename_dct.items():
+        if col in data.columns:
+            data[col] = data[col].replace(mapping)
+
+    return data
