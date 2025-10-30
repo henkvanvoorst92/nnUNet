@@ -49,7 +49,7 @@ def has_all_chans(p_dir, ID, chans):
     return True
 
 
-def create_val_dirs(dir_raw, splits, chans=[0,1,2,3,4,5,6]):
+def create_val_dirs(dir_raw, splits, chans=[0,1,2,3,4,5,6], include_imgs=True, include_segs=True):
 
     dir_raw2 = dir_raw.replace('Dataset519_AV_cta', 'Dataset521_AV_timechan')
 
@@ -59,18 +59,25 @@ def create_val_dirs(dir_raw, splits, chans=[0,1,2,3,4,5,6]):
     # write all to separate folder for inference
     for fold, split in splits.items():
         raw_img_fold_dir = os.path.join(dir_raw2, 'fold_' + fold[-1], 'imagesVal')
-        raw_seg_fold_dir = os.path.join(dir_raw2, 'fold_' + fold[-1], 'labelsVal')
         os.makedirs(raw_img_fold_dir, exist_ok=True)
+        raw_seg_fold_dir = os.path.join(dir_raw2, 'fold_' + fold[-1], 'labelsVal')
         os.makedirs(raw_seg_fold_dir, exist_ok=True)
         for ID in tqdm(split['val']):
             has_imgs = has_all_chans(raw_img_fold_dir, ID, chans)
             has_segs = has_all_chans(raw_seg_fold_dir, ID, chans)
             if not (has_imgs and has_segs):
-                imgs = img_ldr(ID)
-                segs = seg_ldr(ID)
+                if include_segs:
+                    segs = seg_ldr(ID)
+                if include_imgs:
+                    imgs = img_ldr(ID)
+                else:
+                    imgs = segs
+
                 for i in range(imgs.GetSize()[-1]):
-                    sitk.WriteImage(imgs[...,i], os.path.join(raw_img_fold_dir, f"{ID}_chan{i}.nii.gz"))
-                    sitk.WriteImage(segs[...,i], os.path.join(raw_seg_fold_dir, f"{ID}_chan{i}.nii.gz"))
+                    if include_imgs:
+                        sitk.WriteImage(imgs[...,i], os.path.join(raw_img_fold_dir, f"{ID}_chan{i}.nii.gz"))
+                    if include_segs:
+                        sitk.WriteImage(segs[...,i], os.path.join(raw_seg_fold_dir, f"{ID}_chan{i}.nii.gz"))
 
 def nested_val_img_gt_loaders(dir_raw, folds=[0,1,2,3,4], chans=[0,1,2,3,4,5,6]):
 
@@ -290,7 +297,6 @@ def mchan_val_results(p_out):
         mm = pd.read_pickle(mm_all_file)
 
     return pc, mm
-
 
 
 

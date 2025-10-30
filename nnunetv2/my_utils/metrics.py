@@ -1,7 +1,7 @@
 import numpy as np
 import SimpleITK as sitk
 from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix
-from nnunetv2.my_utils.utils import image_or_path_load
+from nnunetv2.my_utils.utils import image_or_path_load, np2sitk
 
 def compute_volume(mask: sitk.SimpleITK.Image or str):
     # mask is an sitk image
@@ -139,6 +139,8 @@ def compare_masks(pred_mask: sitk.Image | str, gt_mask: sitk.Image | str, comput
 
     return results
 
+
+
 def compare_multiclass_masks(
     pred_mask: sitk.Image | str,
     gt_mask: sitk.Image | str,
@@ -238,7 +240,11 @@ def compare_multiclass_masks(
         }
 
         if compute_hausdorff:
-            hd = compute_binary_hausdorff(gt_bin, pred_bin)
+            try:
+                hd = compute_binary_hausdorff(gt_bin, pred_bin)
+            except:
+                hd = compute_binary_hausdorff(gt_bin, np2sitk(sitk.GetArrayFromImage(pred_bin), gt_bin))
+
             if hd is not None:
                 for m, number in hd.items():
                     metrics[m] = number

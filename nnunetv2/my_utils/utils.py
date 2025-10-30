@@ -287,7 +287,7 @@ def get_path_dict(path, ID_splitter='_', filext='.graphml', incl_str=''):
     return path_dct
 
 class NiftiLoader:
-    def __init__(self, root_dir: str, ID_splitter='_', incl_str=''):
+    def __init__(self, root_dir: str, ID_splitter='_', incl_str='', filext='.nii.gz'):
         """
         Initialize the NiftiLoader
 
@@ -298,6 +298,7 @@ class NiftiLoader:
         self.root_dir = root_dir
         self.ID_splitter = ID_splitter
         self.incl_str = incl_str
+        self.filext = filext
 
         self.file_paths = self._find_files()
 
@@ -308,7 +309,7 @@ class NiftiLoader:
         Returns:
         - Dict[str, str]: A dictionary mapping IDs to their corresponding file paths.
         """
-        return get_path_dict(self.root_dir, ID_splitter=self.ID_splitter, filext='.nii.gz', incl_str=self.incl_str)
+        return get_path_dict(self.root_dir, ID_splitter=self.ID_splitter, filext=self.filext, incl_str=self.incl_str)
 
     def __call__(self, ID: str) -> sitk.Image:
         """
@@ -414,6 +415,15 @@ def image_or_path_load(img_or_path):
     if out is not None:
         out = sitk.Cast(out, sitk.sitkInt16)
     return out
+
+def np2sitk(arr: np.ndarray, original_img: sitk.SimpleITK.Image):
+    img = sitk.GetImageFromArray(arr)
+    img.SetSpacing(original_img.GetSpacing())
+    img.SetOrigin(original_img.GetOrigin())
+    img.SetDirection(original_img.GetDirection())
+    # this does not allow cropping (such as removing thorax, neck)
+    #img.CopyInformation(original_img)
+    return img
 
 def combine_excel_files(p_dir, incl_string='.xlsx'):
     return pd.concat([pd.read_excel(os.path.join(p_dir, f)) for f in tqdm(os.listdir(p_dir)) if incl_string in f], axis=0)

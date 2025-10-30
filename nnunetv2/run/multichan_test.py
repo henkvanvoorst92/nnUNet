@@ -4,10 +4,12 @@ import pandas as pd
 import ast
 import numpy as np
 import torch
+import SimpleITK as sitk
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_config, \
-    get_nnUNet_paths, get_experiments, NiftiLoader, get_path_dict, combine_excel_files
+    get_nnUNet_paths, get_experiments, NiftiLoader, get_path_dict, combine_excel_files, np2sitk
 from nnunetv2.run.multichan_val import main_processor, main_results_processor
 from nnunetv2.my_utils.plots import boxplot_per_class
 
@@ -38,12 +40,13 @@ def test_job(experiments,
             imgs_in, segs_out = [], []
             for ldr in img_loaders:
                 imgs = list(ldr.file_paths.values())
-                imgs_in.extend(imgs)
                 pred_ldr = pred_loader(p_exp, os.path.dirname(imgs[0]))
                 try:
                     segs_out.extend([pred_ldr[ID] for ID in ldr.file_paths.keys()])
                 except:
-                    print(1)
+                    print(name_exp, 'prediction loader error')
+                    continue
+                imgs_in.extend(imgs)
 
             out_exists = all([os.path.exists(f) for f in segs_out])
             if (out_exists and (not overwrite) and (not results_mode)):
@@ -89,7 +92,8 @@ def test_loaders(args):
     if dir_cta is not None:
         if os.path.exists(dir_cta):
             img_ldr = NiftiLoader(dir_cta, ID_splitter='_')
-    #ctps to generate ctas image loader (for inference)
+
+    #ctps to generate ctas image loader (for inference) --> should already be split per frame with filename including --peakart-m4_
     dir_sim = args.simcta_img if hasattr(args, 'simcta_img') else None
     if dir_sim is not None:
         if os.path.exists(dir_sim):
@@ -103,6 +107,7 @@ def test_loaders(args):
             for chan in chans:
                 img_chan[chan] = simdata[simdata['chan']==chan]['file_path'].to_dict()
 
+    #add region of interest used for evaluation
     dir_roi = args.roi_gt if hasattr(args, 'roi_gt') else None
     if dir_roi is not None:
         if os.path.exists(dir_roi):
@@ -121,6 +126,7 @@ def test_loaders(args):
                      }
             gt_dct.update({args.fold:imdct})
 
+    #ground truth segmentations for simulated cta --> should be per frame
     dir_simseg = args.simcta_gt if hasattr(args, 'simcta_gt') else None
     if dir_simseg is not None:
         if os.path.exists(dir_simseg):
@@ -225,6 +231,42 @@ def test_figures(pc, args):
     return
 
 
+
+def create_chan_gt(ctp_gt_dir,
+                   chan_gt_dir,
+                   adj_seg_dir=None,
+                   chans=['m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6'],
+                   filext='.nii.gz'
+):
+    """
+    ctp_gt_dir: input dir with 4D CTP GT files
+    chan_gt_dir: output dir for channel-wise GT files
+    adj_seg_dir: if path provided, files with vesselseg for adjustment are used
+    chans: dict with key=str in pred and adj_seg dir files, value=channel index in 4D GT file
+
+    """
+
+    os.makedirs(chan_gt_dir, exist_ok=True)
+
+    gt_ctp_ldr = NiftiLoader(root_dir=ctp_gt_dir, ID_splitter='.', filext=filext)
+
+    adj_file_dct = {}
+    if adj_seg_dir is not None:
+        for timename in chans:
+            adj_file_dct[timename] = get_path_dict(adj_seg_dir, ID_splitter='--', filext='.nii.gz', incl_str=timename)
+
+    for ID in tqdm(gt_ctp_ldr.file_paths.keys()):
+        for timename in chans:
+            gt = gt_ctp_ldr(ID)
+            if timename in adj_file_dct:
+                if ID in adj_file_dct[timename]:
+                    adj_seg = sitk.GetArrayFromImage(sitk.ReadImage(adj_file_dct[timename][ID]))
+                    gt = np2sitk(sitk.GetArrayFromImage(gt)*adj_seg, gt)
+                else:
+                    print(f'[!] No adjustment seg for {ID} time {timename}')
+            sitk.WriteImage(gt, os.path.join(chan_gt_dir, f"{ID}--peakart-{timename}.nii.gz"))
+
+
 if __name__ == "__main__":
 
     # --yml_args raw_CTP_melbourne/files/mchan_av_val.yml
@@ -237,8 +279,16 @@ if __name__ == "__main__":
     # select experiment
     res_mode = args.compute_results_mode if hasattr(args, 'compute_results_mode') else False
 
-    cta_ldr, simcta_ldr, gt_dct = test_loaders(args)
+    #/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/stanford/time_averages_Dataset509_CTAvseg
+    # create_chan_gt(ctp_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/final_seg_daniel',
+    #                chan_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_adj509',
+    #                adj_seg_dir='/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/stanford/time_averages_Dataset509_CTAvseg',
+    #                chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+    #                filext='.nii'
+    #                )
 
+
+    cta_ldr, simcta_ldr, gt_dct = test_loaders(args)
     jobs, seg_dct = test_job(experiments,
                                 img_loaders=(cta_ldr, simcta_ldr),
                                 fold=args.fold,
