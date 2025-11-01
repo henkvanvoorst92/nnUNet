@@ -9,9 +9,10 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_config, \
-    get_nnUNet_paths, get_experiments, NiftiLoader, get_path_dict, combine_excel_files, np2sitk
+    get_nnUNet_paths, get_experiments, NiftiLoader, get_path_dict, combine_excel_files, np2sitk, write_multitab_excel
 from nnunetv2.run.multichan_val import main_processor, main_results_processor
-from nnunetv2.my_utils.plots import boxplot_per_class
+from nnunetv2.my_utils.plots import boxplot_per_class, test_time_plots
+from nnunetv2.my_utils.metrics import comparative_stats
 
 def test_job(experiments,
              img_loaders,
@@ -204,7 +205,13 @@ def mchan_test_results(p_out):
 
     return pc, mm
 
-def test_figures(pc, args):
+def test_figures(pc, args, channel_dct=None, select_exp=['t246','t0']):
+
+
+    if channel_dct is None:
+        channel_dct = {'m6':'-6s', 'm4':'-4s', 'm2':'-2s', 't0':'0s', 'p2':'+2s', 'p4':'+4s', 'p6':'+6s'}
+
+    pc = pc[np.isin(pc['channel'], list(channel_dct.keys())+['cta'])]
 
     dir_fig_cta = os.path.join(args.p_out, 'figures', 'cta')
     os.makedirs(dir_fig_cta, exist_ok=True)
@@ -213,22 +220,26 @@ def test_figures(pc, args):
 
     #rename classes for plot
     pc['Class'] = pc['Class'].map({1: 'Artery', 2: 'Vein', 3: 'Both'})
-    #rename experiments
-    #df['fruit'] = pd.Categorical(df['fruit'], categories=desired_order, ordered=True)
-    # Now sort by that column
-    #df_sorted = df.sort_values('fruit')
+    #pc = pc[(pc['channel'] == 'cta') & np.isin(pc['experiment'], select_exp)]
+    pc = pc.rename(columns={'Dice':'Dice Similarity Coefficient (DSC)'})
 
+    test_time_plots(pc[pc['channel']!='cta'],
+                    dir_figs=dir_fig_4d,
+                    addname='test_results_',
+                    select_exp=select_exp,
+                    metrics=['Dice Similarity Coefficient (DSC)'],
+                    relabel_x=channel_dct
+                    )
 
-    outcomes = ['Dice', 'TPR', 'FPR', 'PPV', 'NPV',
-                'pred-gt_VD', 'AVD', 'Hausdorff', 'HD95', 'AHD']
-    for outcome in outcomes:
-        boxplot_per_class(pc[pc['channel'] == 'cta'],
-                          y=outcome, x='experiment',
-                          subplot_by='Class',
-                          save_path=os.path.join(dir_fig_cta, f'boxplot_cta_{outcome}.png')
-                          )
+    outcome = 'Dice Similarity Coefficient (DSC)'
+    boxplot_per_class(pc[(pc['channel'] == 'cta') & np.isin(pc['experiment'], select_exp)],
+                      y=outcome, x='experiment',
+                      subplot_by='Class',
+                      save_path=os.path.join(dir_fig_cta, f'boxplot_cta_{outcome}.png'),
+                      palette={'t246':'#4c72b0', 't0':'#dd8452'},
+                      panel_text=['C','D']
+                      )
 
-    return
 
 
 
@@ -267,6 +278,8 @@ def create_chan_gt(ctp_gt_dir,
             sitk.WriteImage(gt, os.path.join(chan_gt_dir, f"{ID}--peakart-{timename}.nii.gz"))
 
 
+
+
 if __name__ == "__main__":
 
     # --yml_args raw_CTP_melbourne/files/mchan_av_val.yml
@@ -284,9 +297,15 @@ if __name__ == "__main__":
     #                chan_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_adj509',
     #                adj_seg_dir='/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/stanford/time_averages_Dataset509_CTAvseg',
     #                chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
-    #                filext='.nii'
+    #                filext='.nii.gz'
     #                )
-
+    #
+    # create_chan_gt(ctp_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/final_seg_daniel',
+    #                chan_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_noadj',
+    #                adj_seg_dir=None,
+    #                chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+    #                filext='.nii.gz'
+    #                )
 
     cta_ldr, simcta_ldr, gt_dct = test_loaders(args)
     jobs, seg_dct = test_job(experiments,
@@ -296,12 +315,23 @@ if __name__ == "__main__":
                                 results_mode=res_mode)
 
     if res_mode:
-        main_results_processor(os.path.join(args.p_out, 'test_results'),
-                               gt_dct, seg_dct,
-                               compute_hausdorff=True,
-                               n_procs=args.n_procs,
-                               overwrite=args.overwrite)
-        pc, mm = mchan_test_results(args.p_out)
+        pc_all_file = os.path.join(args.p_out, 'test_results', 'results_per_class.pic')
+        mm_all_file = os.path.join(args.p_out, 'test_results', 'results_macro_micro.pic')
+        if os.path.exists(pc_all_file) and os.path.exists(mm_all_file):
+            pc = pd.read_pickle(pc_all_file)
+            mm = pd.read_pickle(mm_all_file)
+        else:
+            main_results_processor(os.path.join(args.p_out, 'test_results'),
+                                   gt_dct, seg_dct,
+                                   compute_hausdorff=True,
+                                   n_procs=args.n_procs,
+                                   overwrite=args.overwrite)
+            pc, mm = mchan_test_results(args.p_out)
+
+        #optional select subset of pc of interest
+        pc = pc[np.isin(pc['experiment'], ['t0','t246']) & np.isin(pc['channel'], ['cta','m6','m4','m2','t0','p2','p4','p6'])]
+        stat_res = comparative_stats(pc)
+        write_multitab_excel(stat_res, os.path.join(args.p_out,  'comparative_stats.xlsx'), index=True)
 
         test_figures(pc, args)
     else:

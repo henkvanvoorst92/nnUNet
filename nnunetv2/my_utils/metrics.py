@@ -2,6 +2,9 @@ import numpy as np
 import SimpleITK as sitk
 from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix
 from nnunetv2.my_utils.utils import image_or_path_load, np2sitk
+from scipy.stats import sem, t
+from scipy import stats
+import pandas as pd
 
 def compute_volume(mask: sitk.SimpleITK.Image or str):
     # mask is an sitk image
@@ -138,8 +141,6 @@ def compare_masks(pred_mask: sitk.Image | str, gt_mask: sitk.Image | str, comput
         results['Hausdorff'] = hausdorff
 
     return results
-
-
 
 def compare_multiclass_masks(
     pred_mask: sitk.Image | str,
@@ -290,4 +291,97 @@ def compare_multiclass_masks(
         'macro_avg': macro_avg,
         'micro_avg': micro_avg,
     }
+
+
+def compute_grouped_stats(data,
+                          metric_columns: dict,
+                          group_by=['experiment', 'fold', 'channel', 'Class']):
+    """
+    Compute mean, standard deviation (SD), and 95% confidence interval (CI) for specified metrics,
+    grouped by experiment, fold, channel, and class.
+
+    Parameters:
+        data (pd.DataFrame): The input DataFrame.
+        metric_columns (list): List of metric column names to compute stats for.
+        group_by (list): List of columns to group by.
+
+    Returns:
+        pd.DataFrame: A DataFrame with grouped stats (mean, SD, 95% CI).
+    """
+    def compute_stats(group):
+        stats = {}
+        for col,i_round in metric_columns.items():
+            values = group[col].dropna()
+            mean = values.mean()
+            std = values.std()
+            n = len(values)
+            ci = t.ppf(0.975, n - 1) * sem(values) if n > 1 else np.nan  # 95% CI
+            stats[f'{col}_mean'] = mean
+            stats[f'{col}_std'] = std
+            stats[f'{col}_95%CI'] = ci
+            mn, mn_low, mn_hi, sd = round(mean,i_round), round(mean-ci,i_round), round(mean+ci,i_round), round(std,i_round)
+            if i_round==0:
+                mn, mn_low, mn_hi, sd = int(mn), int(mn_low), int(mn_hi), int(sd)
+            stats[f'{col}_mn-ci'] = '{}({}-{})'.format(mn, mn_low, mn_hi)
+            stats[f'{col}_mn-sd'] = '{}±{}'.format(mn, sd)
+        return pd.Series(stats)
+
+    grouped_stats = data.groupby(group_by).apply(compute_stats).reset_index()
+    return grouped_stats
+
+def ANOVA(var, split_dct):
+    tmp = []
+    for k, v in split_dct.items():
+        tmp.append(v[var].dropna())
+    statistic, p = stats.f_oneway(*tmp)
+    return statistic, p, tmp
+
+
+# Perform T-test test on two groups of var in different DataFrames
+def T_test(df1, df2, var):
+    t, p = stats.ttest_ind(df1[var], df2[var], nan_policy='omit')
+    return t, p
+
+def describe_p_value(p):
+    if p < 1e-5:
+        return '<1e-5'
+    elif p < 0.0001:
+        return '<0.0001'
+    elif p < 0.001:
+        return '<0.001'
+    elif p < 0.05:
+        return '<0.05'
+    else:
+        return f'{p:.2f}'
+
+def comparative_stats(data,
+                      metric_rounding: dict = {'Dice': 2, 'TPR': 2, 'PPV': 2},
+                      experiments_compare = [('t0', 't246')]
+                      ):
+
+    performance_table = compute_grouped_stats(data,
+                                              metric_columns=metric_rounding,
+                                              group_by=['experiment', 'channel', 'Class'])
+    res = []
+    for cls in data['Class'].unique():
+        cls_data = data[(data['Class']==cls)]
+        for exp1, exp2 in experiments_compare:
+            exp1_data = cls_data[cls_data['experiment']==exp1]
+            exp2_data = cls_data[cls_data['experiment']==exp2]
+            for metric, i_round in metric_rounding.items():
+                t_stat, p_val = T_test(exp1_data[(exp1_data['channel']=='cta')], exp2_data[(exp2_data['channel']=='cta')], metric)
+                res.append({'Class': cls, 'channel': 'cta', 'experiment_1': exp1,
+                    'experiment_2': exp2, 'metric': metric, 'stat': t_stat, 'p_value': p_val})
+
+                statistic, p, tmp = ANOVA(metric, {
+                    exp1: exp1_data[(exp1_data['channel']!='cta')],
+                    exp2: exp2_data[(exp2_data['channel']!='cta')]
+                })
+                res.append({'Class': cls, 'channel': 'simCTA', 'experiment_1': exp1,
+                    'experiment_2': exp2, 'metric': metric, 'stat': statistic, 'p_value': p})
+
+    res = pd.DataFrame(res)
+    res['p-value'] = [describe_p_value(p) for p in res['p_value']]
+
+    return {'dist': performance_table, 'stat': res}
 

@@ -439,3 +439,15 @@ def rename_result_columns(data, rename_dct=None):
             data[col] = data[col].replace(mapping)
 
     return data
+
+def write_multitab_excel(dataframes, file_path, index=True):
+    """
+    Write multiple pandas DataFrames to an Excel file with separate sheets.
+
+    Parameters:
+    - dataframes: dict, where keys are sheet names and values are DataFrames.
+    - file_path: str, path to save the Excel file.
+    """
+    with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+        for sheet_name, df in dataframes.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=index)

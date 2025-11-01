@@ -148,7 +148,7 @@ def results_worker(job):
     if not (os.path.exists(p_pc) and os.path.exists(p_mm)):
         # if chan in seg_dct[exp][fold].keys():
         pc, mm = [], []
-        for ID, p_seg in seg_dct[exp][fold][chan].items():
+        for ID, p_seg in tqdm(seg_dct[exp][fold][chan].items()):
             if not ID in gt_dct[fold][chan]['gt'].keys():
                 continue
 
