@@ -268,6 +268,9 @@ def create_chan_gt(ctp_gt_dir,
 
     for ID in tqdm(gt_ctp_ldr.file_paths.keys()):
         for timename in chans:
+            f_out = os.path.join(chan_gt_dir, f"{ID}--peakart-{timename}.nii.gz")
+            if os.path.exists(f_out):
+                continue
             gt = gt_ctp_ldr(ID)
             if timename in adj_file_dct:
                 if ID in adj_file_dct[timename]:
@@ -275,7 +278,7 @@ def create_chan_gt(ctp_gt_dir,
                     gt = np2sitk(sitk.GetArrayFromImage(gt)*adj_seg, gt)
                 else:
                     print(f'[!] No adjustment seg for {ID} time {timename}')
-            sitk.WriteImage(gt, os.path.join(chan_gt_dir, f"{ID}--peakart-{timename}.nii.gz"))
+            sitk.WriteImage(gt, f_out)
 
 
 
@@ -291,21 +294,20 @@ if __name__ == "__main__":
     experiments = get_test_experiments(args)
     # select experiment
     res_mode = args.compute_results_mode if hasattr(args, 'compute_results_mode') else False
-
-    #/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/stanford/time_averages_Dataset509_CTAvseg
-    # create_chan_gt(ctp_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/final_seg_daniel',
-    #                chan_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_adj509',
-    #                adj_seg_dir='/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/stanford/time_averages_Dataset509_CTAvseg',
-    #                chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
-    #                filext='.nii.gz'
-    #                )
-    #
-    # create_chan_gt(ctp_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/final_seg_daniel',
-    #                chan_gt_dir='/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_noadj',
-    #                adj_seg_dir=None,
-    #                chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
-    #                filext='.nii.gz'
-    #                )
+    if args.lbl_adjust:
+        create_chan_gt(ctp_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/final_seg_daniel') ,
+                       chan_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/pertime_gt_adj509'),
+                       adj_seg_dir=os.path.join(os.path.dirname(args.simcta_img), 'time_averages_Dataset509_CTAvseg'),
+                       chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+                       filext='.nii.gz'
+                       )
+    else:
+        create_chan_gt(ctp_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/final_seg_daniel') ,
+                       chan_gt_dir=os.path.join(os.path.dirname(args.p_out), 'raw_CTP_melbourne/annotate/SU_CTP_todo/pertime_gt_noadj'),
+                       adj_seg_dir=None,
+                       chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+                       filext='.nii.gz'
+                       )
 
     cta_ldr, simcta_ldr, gt_dct = test_loaders(args)
     jobs, seg_dct = test_job(experiments,
