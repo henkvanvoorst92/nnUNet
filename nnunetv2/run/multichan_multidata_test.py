@@ -87,7 +87,9 @@ def test_loaders(args):
 
     img_ldr, seg_ldr = None, None
     sim_ldr, simseg_ldr = None, None
+    poorcta_ldr, poorseg_ldr = None, None
     roi_ldr = None
+    gt_dct = {}
 
     #real cta image loader (for inference)
     dir_cta = args.cta_img if hasattr(args, 'cta_img') else None
@@ -109,86 +111,54 @@ def test_loaders(args):
             for chan in chans:
                 img_chan[chan] = simdata[simdata['chan']==chan]['file_path'].to_dict()
 
+    dir_poor = args.poorcta_img if hasattr(args, 'poorcta_img') else None
+    if dir_poor is not None:
+        if os.path.exists(dir_cta):
+            poorcta_ldr = NiftiLoader(dir_cta, ID_splitter='_')
+
     #add region of interest used for evaluation
     dir_roi = args.roi_gt if hasattr(args, 'roi_gt') else None
     if dir_roi is not None:
         if os.path.exists(dir_roi):
             roi_ldr = NiftiLoader(dir_roi, ID_splitter='_')
 
-    #gt structure to compute results
-    gt_dct = {} #all paths to GT data
-    dir_gt = args.cta_gt if hasattr(args, 'cta_gt') else None
-    if dir_gt is not None:
-        if os.path.exists(dir_gt):
-            seg_ldr = get_path_dict(dir_gt, ID_splitter='_', filext='.nii.gz')
+    #original cta dataset
+    dir_seg = args.cta_gt if hasattr(args, 'cta_gt') else None
+    if dir_seg is not None:
+        if os.path.exists(dir_seg):
+            seg_ldr = get_path_dict(dir_seg, ID_splitter='_', filext='.nii.gz')
             imlr = {k:v for k,v in img_ldr.file_paths.items() if k in seg_ldr.keys()}
-            imdct = {'cta': {'gt': seg_ldr,
+            print('Original CTA dataset number of samples:',len(seg_ldr))
+            gt_dct['cta'] =  {'gt': seg_ldr,
                              'img': imlr,
                              'roi': roi_ldr.file_paths if roi_ldr is not None else None}
-                     }
-            gt_dct.update({args.fold:imdct})
 
     #ground truth segmentations for simulated cta --> should be per frame
     dir_simseg = args.simcta_gt if hasattr(args, 'simcta_gt') else None
     if dir_simseg is not None:
         if os.path.exists(dir_simseg):
             #simseg_ldr = NiftiLoader(dir_simseg, ID_splitter='_', incl_str='peakart')
-            simdct = {}
             for chan in chans:
                 ssd = get_path_dict(dir_simseg, ID_splitter='--', filext='.nii.gz', incl_str=f'peakart-{chan}')
-                simdct[chan] = {
+                print(f'simCTA channel {chan} number of samples:', len(ssd))
+                gt_dct[chan] = {
                                 'gt': ssd,
                                 'img': img_chan[chan],
                                 'roi':roi_ldr.file_paths if roi_ldr is not None else None
                                 }
-                gt_dct.update({args.fold: {**simdct, **gt_dct[args.fold]}})
 
-    return img_ldr, sim_ldr, gt_dct
+    dir_poorseg = args.poorcta_gt if hasattr(args, 'poorcta_gt') else None
+    if dir_poorseg is not None:
+        if os.path.exists(dir_poorseg):
+            poorseg_ldr = get_path_dict(dir_poorseg, ID_splitter='_', filext='.nii.gz')
+            imlr = {k:v for k,v in poorcta_ldr.file_paths.items() if k in poorseg_ldr.keys()}
+            print('Poor CTA dataset number of samples:', len(poorseg_ldr))
+            gt_dct['poorcta'] =  {'gt': poorseg_ldr,
+                             'img': imlr,
+                             'roi': roi_ldr.file_paths if roi_ldr is not None else None}
 
-def get_test_experiments(args):
-    # get nnunet locations, identify splits
-    dataset = [args.dataset] if isinstance(args.dataset,str) else args.dataset
+    return img_ldr, sim_ldr, poorcta_ldr, gt_dct
 
-    exps = {}
-    for ds in dataset:
-        dir_raw, dir_pp, dir_train = get_nnUNet_paths(args.nnunet_dir, ds)
-        experiments = get_experiments(dir_train)
-        exps.update(experiments)
-
-    #select experiments
-    if args.experiment is not None:
-        experiments = {}
-        for k,v in exps.items():
-            expname = k.split('_')[0]
-            if expname in args.experiment or expname==args.experiment:
-                experiments[k] = v
-    else:
-        experiments = exps
-
-    return experiments
-
-def pred_loader(p_exp, img_dir):
-
-    [exp,m] = p_exp.split(os.sep)[-2:]
-    if 'MynnUNetTrainer' in m:
-        name = m.split('nnUNetPlans')[0].split('MynnUNetTrainer')[1].replace('__', '')
-    else:
-        if 'lblCTP' in exp:
-            name = f'_lblCTP'
-        else:
-            name = ''
-
-    seg_dir = os.path.join(os.path.dirname(img_dir), '{}_{}{}'.format(os.path.basename(img_dir), exp, name))
-    if os.path.exists(seg_dir):
-        out = get_path_dict(seg_dir, ID_splitter='_', filext='.nii.gz')
-    else:
-        os.makedirs(seg_dir, exist_ok=True)
-        out = {}
-        for f in os.listdir(img_dir):
-            ID = f.split('.')[0].split('_')[0]
-            out[ID] = os.path.join(seg_dir, ID+'.nii.gz')
-
-    return out
 
 def mchan_test_results(p_out):
 
@@ -281,8 +251,42 @@ def create_chan_gt(ctp_gt_dir,
                     print(f'[!] No adjustment seg for {ID} time {timename}')
             sitk.WriteImage(gt, f_out)
 
+def pred_seg_loaders(args):
 
+    pred_seg = {}
+    for folder,name in args.experiments.items():
+        cta_dct, simcta_dct, poorcta_dct = {}, {}, {}
 
+        dir_cta = os.path.join(args.cta_pred, folder)
+        if os.path.exists(dir_cta):
+            cta_dct = get_path_dict(os.path.join(args.cta_pred,folder), ID_splitter='_', filext='.nii.gz')
+
+        dir_simcta = os.path.join(args.simcta_pred, f'time_averages{folder[3:]}')
+        if os.path.exists(dir_simcta):
+            simcta_files = get_path_dict(dir_simcta, ID_splitter='_', filext='.nii.gz')
+            IDs = [k.split('--')[0] for k in simcta_files.keys()]
+
+            simcta_dct = {}
+            for ID in IDs:
+                tmp = {}
+                for chan in args.chans:
+                    f_pred = os.path.join(dir_simcta, f'{ID}--peakart-{chan}.nii.gz')
+                    if os.path.exists(f_pred):
+                        tmp[chan] = f_pred
+                if len(tmp)>0:
+                    simcta_dct[ID] = tmp
+
+        dir_poor_cta = os.path.join(args.poorcta_pred,folder)
+        if os.path.exists(dir_poor_cta):
+            poorcta_dct = get_path_dict(dir_poor_cta, ID_splitter='_', filext='.nii.gz')
+
+        pred_seg[folder] = {
+            'cta': cta_dct,
+            'simcta': simcta_dct,
+            'poorcta': poorcta_dct
+        }
+
+    return pred_seg
 
 if __name__ == "__main__":
 
@@ -291,26 +295,29 @@ if __name__ == "__main__":
     args = init_args()
     args = update_args_with_yaml(args, load_yaml_config(args.yml_args))
 
-
-    experiments = get_test_experiments(args)
     # select experiment
     res_mode = args.compute_results_mode if hasattr(args, 'compute_results_mode') else False
     if args.lbl_adjust:
         create_chan_gt(ctp_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/final_seg_daniel') ,
                        chan_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/pertime_gt_adj509'),
                        adj_seg_dir=os.path.join(os.path.dirname(args.simcta_img), 'time_averages_Dataset509_CTAvseg'),
-                       chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+                       chans=args.chans,
                        filext='.nii.gz'
                        )
     else:
         create_chan_gt(ctp_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/final_seg_daniel') ,
                        chan_gt_dir=os.path.join(os.path.dirname(args.p_out), 'annotate/SU_CTP_todo/pertime_gt_noadj'),
                        adj_seg_dir=None,
-                       chans=['m10','m8','m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6', 'p8', 'p10'],
+                       chans=args.chans,
                        filext='.nii.gz'
                        )
 
-    cta_ldr, simcta_ldr, gt_dct = test_loaders(args)
+    cta_ldr, simcta_ldr, poorcta_ldr, gt_dct = test_loaders(args)
+    pred_dct = pred_seg_loaders(args)
+
+    #pass 2 dicts with exp and gt for eval computation
+
+
     jobs, seg_dct = test_job(experiments,
                                 img_loaders=(cta_ldr, simcta_ldr),
                                 fold=args.fold,

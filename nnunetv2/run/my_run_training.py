@@ -25,7 +25,6 @@ def find_free_network_port() -> int:
     s.close()
     return port
 
-
 def get_trainer_from_args(dataset_name_or_id: Union[int, str],
                           configuration: str,
                           fold: int,
