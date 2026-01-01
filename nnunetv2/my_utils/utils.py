@@ -173,6 +173,24 @@ def create_input_file(args, n_jobs=10, image_dirs=['NCCT-3chan', 'dwi'],
 
     return df
 
+
+def sitk_dilate_mm(mask, kernel_mm, background=0, foreground=1):
+    if isinstance(kernel_mm, int) or isinstance(kernel_mm, float):
+        k0 = k1 = k2 = kernel_mm
+    elif isinstance(kernel_mm, tuple) or isinstance(kernel_mm, list):
+        k0, k1, k2 = kernel_mm
+
+    kernel_rad = (int(np.floor(k0 / mask.GetSpacing()[0])),
+                  int(np.floor(k1 / mask.GetSpacing()[1])),
+                  int(np.floor(k2 / mask.GetSpacing()[2])))
+
+    dilate = sitk.BinaryDilateImageFilter()
+    dilate.SetBackgroundValue(background)
+    dilate.SetForegroundValue(foreground)
+    dilate.SetKernelRadius(kernel_rad)
+    return dilate.Execute(mask)
+
+
 def fetch_IDs(dir_inp):
     return list(set([f.split('_')[0] for f in os.listdir(dir_inp) if '.nii' in f]))
 
