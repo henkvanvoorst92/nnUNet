@@ -469,3 +469,28 @@ def write_multitab_excel(dataframes, file_path, index=True):
     with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
         for sheet_name, df in dataframes.items():
             df.to_excel(writer, sheet_name=sheet_name, index=index)
+
+
+def select_from_dataframe(df: pd.DataFrame, conditions_dict: dict, verbose=False) -> pd.DataFrame:
+    filtered = df.copy()
+    for colname, condition in conditions_dict.items():
+
+        if colname in filtered.columns:
+            if verbose:
+                print(f"Filtering {colname} for condition: {condition}")
+                print(f"Initial number of rows: {len(filtered)}")
+            # Scalar equality
+            if not isinstance(condition, (list, tuple, set)):
+                filtered = filtered[filtered[colname] == condition]
+            # List / set → isin
+            elif isinstance(condition, (list, set)):
+                filtered = filtered[filtered[colname].isin(condition)]
+
+            if verbose:
+                print(f"Number of rows after filtering: {len(filtered)}")
+
+        # if empty skip
+        if filtered.empty:
+            continue
+
+    return filtered
