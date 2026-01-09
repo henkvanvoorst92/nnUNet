@@ -13,12 +13,14 @@ from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_
 from nnunetv2.run.multichan_val import main_processor, main_results_processor
 from nnunetv2.my_utils.plots import boxplot_per_class, test_time_plots
 from nnunetv2.my_utils.metrics import comparative_stats, compare_multiclass_masks, compare_masks
-from nnunetv2.my_utils.utils import np2sitk, image_or_path_load, sitk_dilate_mm
+from nnunetv2.my_utils.utils import np2sitk, image_or_path_load, sitk_dilate_mm, remove_small_cc
 
 
 def create_chan_gt(ctp_gt_dir,
                    chan_gt_dir,
                    adj_seg_dir=None,
+                   roi_loader=None,
+                   min_cc_ml=None,
                    chans=['m6', 'm4', 'm2', 't0', 'p2', 'p4', 'p6'],
                    filext='.nii.gz',
                    dil_adj_seg=0,
@@ -27,6 +29,8 @@ def create_chan_gt(ctp_gt_dir,
     ctp_gt_dir: input dir with 4D CTP GT files
     chan_gt_dir: output dir for channel-wise GT files
     adj_seg_dir: if path provided, files with vesselseg for adjustment are used
+    roi_loader: NiftiLoader for roi files to limit evaluation region
+    min_cc_ml: minimum connected component size in mL to keep in GT files
     chans: dict with key=str in pred and adj_seg dir files, value=channel index in 4D GT file
 
     """
@@ -46,20 +50,101 @@ def create_chan_gt(ctp_gt_dir,
             if os.path.exists(f_out):
                 continue
             gt = gt_ctp_ldr(ID)
+            gt_arr = sitk.GetArrayFromImage(gt)
             if timename in adj_file_dct:
                 if ID in adj_file_dct[timename]:
                     adj_seg = sitk.ReadImage(adj_file_dct[timename][ID])
                     if dil_adj_seg>0:
                         adj_seg = sitk_dilate_mm(adj_seg, dil_adj_seg)
                     adj_seg = sitk.GetArrayFromImage(adj_seg)
-                    gt = np2sitk(sitk.GetArrayFromImage(gt)*adj_seg, gt)
+                    gt_arr = gt_arr*adj_seg
+                    #something with mincc and roi here?
+                    if roi_loader is not None:
+                        if ID in roi_loader.file_paths:
+                            roi = roi_loader(ID)
+                            roi_arr = sitk.GetArrayFromImage(roi)
+                            gt_arr = gt_arr * roi_arr
+                        else:
+                            print(f'[!] No ROI for {ID}')
+
+                    if min_cc_ml is not None:
+                        voxel_volume = np.prod(gt.GetSpacing()) / 1000  # in mL
+                        min_cc_voxels = int(np.ceil(min_cc_ml / voxel_volume))
+                        gt_arr = gt_arr*remove_small_cc(gt_arr, min_cc_voxels)
+
+                    gt = np2sitk(gt_arr, gt)
                 else:
                     print(f'[!] No adjustment seg for {ID} time {timename}')
             sitk.WriteImage(gt, f_out)
 
+def create_new_gt(org_gt_dir,new_gt_dir,roi_loader=None, min_cc_ml=None, addname='_cta', ID_splitter='_', filext='.nii.gz'):
+
+    #adjust gt files by only selecting a roi and removing cc smaller than min_cc_ml
+    os.makedirs(new_gt_dir, exist_ok=True)
+    org_gt_ldr = NiftiLoader(root_dir=org_gt_dir, ID_splitter=ID_splitter, filext=filext)
+    org_IDs = list(org_gt_ldr.file_paths.keys())
+    new_IDs_available = [f.split(ID_splitter)[0] for f in os.listdir(new_gt_dir)]
+    intersect_IDs =  list(set(org_IDs) - set(new_IDs_available))
+    if len(intersect_IDs)==0:
+        return get_path_dict(new_gt_dir, ID_splitter=ID_splitter, filext=filext)
+
+    for ID in tqdm(org_gt_ldr.file_paths.keys()):
+        f_out = os.path.join(new_gt_dir, f"{ID}{addname}.nii.gz")
+        if os.path.exists(f_out):
+            continue
+        gt = org_gt_ldr(ID)
+        gt_arr = sitk.GetArrayFromImage(gt)
+
+        if roi_loader is not None:
+            if ID in roi_loader.file_paths:
+                roi = roi_loader(ID)
+                roi_arr = sitk.GetArrayFromImage(roi)
+                gt_arr = gt_arr * roi_arr
+            else:
+                print(f'[!] No ROI for {ID}')
+
+        if min_cc_ml is not None:
+            voxel_volume = np.prod(gt.GetSpacing()) / 1000  # in mL
+            min_cc_voxels = int(np.ceil(min_cc_ml / voxel_volume))
+            #remove small CCs
+            #from nnunetv2.my_utils.segmentation_postprocessing import remove_small_connected_components
+            gt_arr = gt_arr*remove_small_cc(gt_arr, min_cc_voxels)
+
+        gt_new = np2sitk(gt_arr, gt)
+        sitk.WriteImage(gt_new, f_out)
+
 def get_chan_gt(args):
 
-    #chan_gt_dir = os.path.join(os.path.dirname(args.p_out), f'annotate/SU_CTP_todo/pertime_gt_adj509')
+    dir_roi = getattr(args, 'roi_gt', None)
+    roi_reader = NiftiLoader(dir_roi, ID_splitter='_') if dir_roi is not None else None
+    roiname = '_'+os.path.basename(dir_roi) if dir_roi is not None else ''
+
+
+    min_cc_ml = getattr(args, 'min_cc_ml', None)
+    mincc_name = f'_minCC{min_cc_ml}mL' if dir_roi is not None else ''
+
+    #create poorcta and normal cta labels
+    org_cta_gt = getattr(args, 'cta_gt', None)
+    org_poorcta_gt = getattr(args, 'poorcta_gt', None)
+    new_dir_add = f'{roiname}{mincc_name}'
+
+    if org_cta_gt is not None:
+        new_cta_gt = os.path.join(os.path.dirname(org_cta_gt),'cta_gt'+new_dir_add)
+        create_new_gt(org_cta_gt, new_cta_gt,
+                        roi_loader=roi_reader,
+                        min_cc_ml=min_cc_ml,
+                        addname='_cta', ID_splitter='_',
+                        filext='.nii.gz')
+
+    if org_poorcta_gt is not None:
+        new_poorcta_gt = os.path.join(os.path.dirname(org_poorcta_gt),'poorcta_gt'+new_dir_add)
+        create_new_gt(org_poorcta_gt, new_poorcta_gt,
+                        roi_loader=roi_reader,
+                        min_cc_ml=min_cc_ml,
+                        addname='_cta', ID_splitter='_',
+                        filext='.nii.gz')
+
+    #simCTA GTs
     chan_gt_dir = args.simcta_gt
     dil_adj_seg = None
     if hasattr(args, 'dil_adj_seg'):
@@ -67,11 +152,15 @@ def get_chan_gt(args):
     if not isinstance(dil_adj_seg,list):
         dil_adj_seg = [dil_adj_seg]
 
+    chan_dirs = []
     for das in dil_adj_seg:
         if das is not None:
             chan_gt_dir_out = f'{chan_gt_dir}_adj509_dil{das}'
         else:
             chan_gt_dir_out = chan_gt_dir
+        if min_cc_ml is not None:
+            chan_gt_dir_out = f'{chan_gt_dir_out}_minCC{min_cc_ml}mL'
+
 
         create_chan_gt(ctp_gt_dir=args.ctp_gt ,
                        chan_gt_dir=chan_gt_dir_out,
@@ -80,6 +169,9 @@ def get_chan_gt(args):
                        dil_adj_seg=das,
                        filext='.nii.gz'
                        )
+        chan_dirs.append(chan_gt_dir_out)
+
+    return new_cta_gt, new_poorcta_gt, chan_dirs
 
 def test_loaders(args):
 

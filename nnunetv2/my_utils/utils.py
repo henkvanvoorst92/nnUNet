@@ -11,6 +11,7 @@ import argparse
 import yaml
 from typing import Dict
 from tqdm import tqdm
+from scipy.ndimage.measurements import label
 #torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 
 def load_yaml_config(yaml_file):
@@ -494,3 +495,11 @@ def select_from_dataframe(df: pd.DataFrame, conditions_dict: dict, verbose=False
             continue
 
     return filtered
+
+def remove_small_cc(seg:np.ndarray,min_count=100):
+	# filters out small connected components
+	labels, nc = label(seg) # uses scipy.ndimage.measurements
+	unique, counts = np.unique(labels, return_counts=True) # unique connected components
+	v = unique[counts>min_count] # cc's larger than min_count
+	out = ((labels*np.isin(labels,v)*1)*(seg>0)>0)*1 #combine all the above in a binary segmentation
+	return out

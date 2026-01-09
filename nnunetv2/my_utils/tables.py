@@ -1,7 +1,12 @@
 import pandas as pd
 import numpy as np
 
-def mean_sd_table(spatial, columns=None, partition_by=None, rounding=None, use_plus_minus=False):
+def mean_sd_table(spatial,
+                  columns=None,
+                  partition_by=None,
+                  rounding=None,
+                  use_plus_minus=False,
+                  use_se=False):
     """
     Summarize metrics with mean and standard deviation, optionally partitioning the data.
 
@@ -32,15 +37,21 @@ def mean_sd_table(spatial, columns=None, partition_by=None, rounding=None, use_p
         for col in columns:
             mean = group_data[col].mean()
             std = group_data[col].std()
+            se = std / np.sqrt(row['count_notna']) if row['count_notna'] > 0 else np.nan
             if rounding and col in rounding:
                 r = rounding[col]
                 if r>0:
                     mean = round(mean, r)
                     std = round(std, r)
+                    se = round(se, r)
                 else:
                     mean = int(round(mean, r)) if not np.isnan(mean) else mean
                     std = int(round(std, r)) if not np.isnan(std) else std
-            row[col] = f"{mean} ±{std}" if use_plus_minus else (mean, std)
+                    se = int(round(se, r)) if not np.isnan(se) else se
+            if use_se:
+                row[col] = f"{mean} ±{se}" if use_plus_minus else (mean, se)
+            else:
+                row[col] = f"{mean} ±{std}" if use_plus_minus else (mean, std)
         results.append(row)
 
     return pd.DataFrame(results)
