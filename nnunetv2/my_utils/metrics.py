@@ -7,6 +7,7 @@ from nnunetv2.my_utils.utils import image_or_path_load, np2sitk
 from scipy.stats import sem, t
 from scipy import stats
 import pandas as pd
+from typing import Union
 
 def compute_volume(mask: sitk.SimpleITK.Image or str):
     # mask is an sitk image
@@ -165,13 +166,6 @@ def compare_masks(pred_mask: sitk.Image | str, gt_mask: sitk.Image | str, comput
     pred_vol = compute_volume(pred_mask_bin)
     gt_vol = compute_volume(gt_mask_bin)
 
-    # Hausdorff distance (only if requested)
-    hausdorff = None
-    if compute_hausdorff:
-        hd_filter = sitk.HausdorffDistanceImageFilter()
-        hd_filter.Execute(gt_mask_bin, pred_mask_bin)
-        hausdorff = hd_filter.GetHausdorffDistance()
-
     if vessel_metrics:
         cldice = cl_dice(
             sitk.GetArrayFromImage(pred_mask_bin),
@@ -215,12 +209,20 @@ def compare_masks(pred_mask: sitk.Image | str, gt_mask: sitk.Image | str, comput
         'pred-gt_VD': pred_vol - gt_vol,
         'AVD': abs(pred_vol - gt_vol)
     }
-
+    # Hausdorff distance (only if requested)
+    hausdorff = None
     if compute_hausdorff:
-        results['Hausdorff'] = hausdorff
+        try:
+            hd = compute_binary_hausdorff(gt_mask_bin, pred_mask_bin)
+        except:
+            hd = compute_binary_hausdorff(gt_mask_bin, np2sitk(sitk.GetArrayFromImage(pred_mask_bin), gt_mask_bin))
+
+        if hd is not None:
+            for m, number in hd.items():
+                results[m] = number
 
     if vessel_metrics:
-        results['cldice'] = cldice
+        results['clDice'] = cldice
         #betti errors
         results['betti_0_error'] = betti_0_error
         results['betti_1_error'] = betti_1_error
@@ -345,7 +347,7 @@ def compare_multiclass_masks(
                     metrics[m] = number
 
         if vessel_metrics:
-            metrics['cldice'] = cl_dice(
+            metrics['clDice'] = cl_dice(
                 sitk.GetArrayFromImage(pred_bin),
                 sitk.GetArrayFromImage(gt_bin)
             )
@@ -383,7 +385,7 @@ def compare_multiclass_masks(
             macro_avg[hd_measure] = float(np.mean(vals)) if len(vals) else None
 
     if vessel_metrics:
-        macro_avg['cldice'] = _macro('cldice')
+        macro_avg['clDice'] = _macro('clDice')
         macro_avg['betti_0_error'] = _macro('betti_0_error')
         macro_avg['betti_1_error'] = _macro('betti_1_error')
         macro_avg['betti_2_error'] = _macro('betti_2_error')
@@ -503,3 +505,114 @@ def comparative_stats(data,
 
     return {'dist': performance_table, 'stat': res}
 
+
+def artery_vein_confusion_mask(
+    gt: Union[np.ndarray, sitk.Image],
+    pred: Union[np.ndarray, sitk.Image],
+    return_sitk: bool = True,
+):
+    """
+    Dual-class confusion mask.
+
+    Classes:
+        0 = background
+        1 = class 1
+        2 = class 2
+
+    Output encoding:
+        TP class 1 -> 1
+        TP class 2 -> 5
+        FP pred=1 but gt=2 -> 4
+        FP pred=2 but gt=1 -> 2
+        FN (pred=0, gt in {1,2}) -> 7
+        TN -> 0
+    """
+
+    gt_is_sitk = isinstance(gt, sitk.Image)
+    pred_is_sitk = isinstance(pred, sitk.Image)
+
+    gt_np = sitk.GetArrayFromImage(gt) if gt_is_sitk else np.asarray(gt)
+    pred_np = sitk.GetArrayFromImage(pred) if pred_is_sitk else np.asarray(pred)
+
+    if gt_np.shape != pred_np.shape:
+        raise ValueError("gt and pred must have the same shape")
+
+    out = np.zeros_like(gt_np, dtype=np.uint8)
+
+    # --- True Positives ---
+    out[(gt_np == 1) & (pred_np == 1)] = 1
+    out[(gt_np == 2) & (pred_np == 2)] = 5
+
+    # --- False Positives (wrong class) ---
+    out[(gt_np == 2) & (pred_np == 1)] = 4
+    out[(gt_np == 1) & (pred_np == 2)] = 2
+
+    # --- False Negatives (predicted background) ---
+    out[(gt_np > 0) & (pred_np == 0)] = 7
+
+    # --- Return SITK if needed ---
+    if return_sitk and gt_is_sitk:
+        out_img = sitk.GetImageFromArray(out)
+        out_img.CopyInformation(gt)
+        return out_img
+
+    return out
+
+def artery_vein_confusion_mask(
+    gt: Union[np.ndarray, sitk.Image],
+    pred: Union[np.ndarray, sitk.Image],
+    return_sitk: bool = True,
+):
+    """
+    Create a confusion mask for a dual-class segmentation problem.
+
+    Classes:
+        0 = background
+        1 = class 1
+        2 = class 2
+
+    Output encoding:
+        TP class 1 -> 1
+        TP class 2 -> 5
+        FP pred=1 but gt=2 -> 4
+        FP pred=2 but gt=1 -> 2
+        FP (gt>0, pred=0) -> 7
+
+        TN -> 0
+    """
+
+    gt_is_sitk = isinstance(gt, sitk.Image)
+    pred_is_sitk = isinstance(pred, sitk.Image)
+
+    if gt_is_sitk:
+        gt_np = sitk.GetArrayFromImage(gt)
+    else:
+        gt_np = np.asarray(gt)
+
+    if pred_is_sitk:
+        pred_np = sitk.GetArrayFromImage(pred)
+    else:
+        pred_np = np.asarray(pred)
+
+    if gt_np.shape != pred_np.shape:
+        raise ValueError("gt and pred must have the same shape")
+
+    out = np.zeros_like(gt_np, dtype=np.uint8)
+
+    # --- True Positives ---
+    out[(gt_np == 1) & (pred_np == 1)] = 1
+    out[(gt_np == 2) & (pred_np == 2)] = 5
+
+    # --- False Positives (wrong class) ---
+    out[(gt_np == 2) & (pred_np == 1)] = 4 #pred is vein but actually artery
+    out[(gt_np == 1) & (pred_np == 2)] = 2 # pred is artery but actually vein
+    out[(gt_np == 0) & (pred_np > 0)] = 7 #pred is artery or vein but actually background
+
+    # --- False Negatives ---
+    out[(gt_np > 0) & (pred_np == 0)] = 6
+
+    # --- Return SITK if needed ---
+    if return_sitk and gt_is_sitk:
+        return np2sitk(out, gt)
+
+    return out
