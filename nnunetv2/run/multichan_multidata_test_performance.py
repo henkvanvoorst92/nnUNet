@@ -305,7 +305,7 @@ def test_loaders(args, gt_dir_dct=None):
     dir_poor = args.poorcta_img if hasattr(args, 'poorcta_img') else None
     if dir_poor is not None:
         if os.path.exists(dir_cta):
-            poorcta_ldr = NiftiLoader(dir_cta, ID_splitter='_')
+            poorcta_ldr = NiftiLoader(dir_poor, ID_splitter='_')
 
     #add region of interest used for evaluation
     dir_roi = args.roi_gt if hasattr(args, 'roi_gt') else None
@@ -325,7 +325,15 @@ def test_loaders(args, gt_dir_dct=None):
             gt_dct['cta'] =  {'gt': seg_ldr,
                              'img': imlr,
                              'roi': roi_ldr.file_paths if roi_ldr is not None else None}
-
+            if len(seg_ldr)!=len(imlr):
+                print(f'[!] Warning: number of GT segmentations {len(seg_ldr)} does not match number of CTA images {len(imlr)}')
+                #get IDs missing in seg_ldr or imldr
+                seg_IDs = set(seg_ldr.keys())
+                img_IDs = set(imlr.keys())
+                missing_seg = img_IDs - seg_IDs
+                missing_img = seg_IDs - img_IDs
+                print(f'[!] Missing GT segmentations for IDs: {missing_seg}')
+                print(f'[!] Missing CTA images for IDs: {missing_img}')
 
 
     #ground truth segmentations for simulated cta --> should be per frame
@@ -364,6 +372,16 @@ def test_loaders(args, gt_dir_dct=None):
             gt_dct['poorcta'] =  {'gt': poorseg_ldr,
                              'img': imlr,
                              'roi': roi_ldr.file_paths if roi_ldr is not None else None}
+            if len(poorseg_ldr)!=len(imlr):
+                print(f'[!] Warning: number of GT segmentations {len(seg_ldr)} does not match number of CTA images {len(imlr)}')
+                #get IDs missing in seg_ldr or imldr
+                seg_IDs = set(poorseg_ldr.keys())
+                img_IDs = set(imlr.keys())
+                missing_seg = img_IDs - seg_IDs
+                missing_img = seg_IDs - img_IDs
+                print(f'[!] Missing poorCTA GT segmentations for IDs: {missing_seg}')
+                print(f'[!] Missing poorCTA images for IDs: {missing_img}')
+
 
     fin_gt = {'org': gt_dct}
     if gt_dir_dct is not None:

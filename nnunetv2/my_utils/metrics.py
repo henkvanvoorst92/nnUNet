@@ -604,8 +604,8 @@ def artery_vein_confusion_mask(
     out[(gt_np == 2) & (pred_np == 2)] = 5
 
     # --- False Positives (wrong class) ---
-    out[(gt_np == 2) & (pred_np == 1)] = 4 #pred is vein but actually artery
-    out[(gt_np == 1) & (pred_np == 2)] = 2 # pred is artery but actually vein
+    out[(gt_np == 2) & (pred_np == 1)] = 4 #pred is artery but actually vein --> GT=Vein (yellow)
+    out[(gt_np == 1) & (pred_np == 2)] = 2 #pred is vein but actually artery --> GT=artery (green)
     out[(gt_np == 0) & (pred_np > 0)] = 7 #pred is artery or vein but actually background
 
     # --- False Negatives ---
@@ -616,3 +616,80 @@ def artery_vein_confusion_mask(
         return np2sitk(out, gt)
 
     return out
+
+
+
+def combine_two_1x2_figures(
+        fig1, axes1,
+        fig2, axes2,
+        panel_labels=True,
+        panel_letters=("A", "B", "C", "D"),
+        label_pos=(-0.12, 1.05),
+        label_fontsize=14,
+        close_original=True,
+        figsize=(10, 8)
+):
+    """
+    Combine two figures (each with 1x2 axes) into a 2x2 subplot figure.
+
+    Layout:
+        axes1 -> first row
+        axes2 -> second row
+    """
+
+    # -----------------------------
+    # new figure
+    # -----------------------------
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    # flatten helpers
+    src_axes = [axes1[0], axes1[1], axes2[0], axes2[1]]
+    dst_axes = axes.flatten()
+
+    # -----------------------------
+    # copy artists from source axes
+    # -----------------------------
+    for src, dst in zip(src_axes, dst_axes):
+
+        # copy everything drawn on axes
+        for artist in src.get_children():
+            try:
+                artist.remove()
+                dst.add_artist(artist)
+            except Exception:
+                pass
+
+        # copy axis settings
+        dst.set_xlim(src.get_xlim())
+        dst.set_ylim(src.get_ylim())
+        dst.set_title(src.get_title())
+        dst.set_xlabel(src.get_xlabel())
+        dst.set_ylabel(src.get_ylabel())
+
+    # -----------------------------
+    # panel labels (A B C D)
+    # -----------------------------
+    if panel_labels:
+        for ax, letter in zip(dst_axes, panel_letters):
+            ax.text(
+                label_pos[0],
+                label_pos[1],
+                letter,
+                transform=ax.transAxes,
+                fontsize=label_fontsize,
+                fontweight="bold",
+                va="top"
+            )
+
+    # -----------------------------
+    # layout
+    # -----------------------------
+    plt.tight_layout()
+
+    # optionally close old figs
+    if close_original:
+        plt.close(fig1)
+        plt.close(fig2)
+
+    return fig, axes
+

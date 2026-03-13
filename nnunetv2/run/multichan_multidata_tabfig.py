@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from typing import List, Optional, Union, Tuple
 import numpy as np
 import torch
+from pathlib import Path
 import SimpleITK as sitk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -16,13 +17,15 @@ from scipy.stats import ttest_1samp
 from nnunetv2.my_utils.utils import init_args, update_args_with_yaml, load_yaml_config, \
     get_nnUNet_paths, get_experiments, NiftiLoader, get_path_dict, combine_excel_files, np2sitk, write_multitab_excel
 from nnunetv2.run.multichan_val import main_processor, main_results_processor
-from nnunetv2.my_utils.plots import boxplot_per_class, test_time_plots
+from nnunetv2.my_utils.plots import boxplot_per_class, test_time_plots, combine_figures_2x2, combine_figures_with_real_axes
 from nnunetv2.my_utils.tables import mean_sd_table
 from nnunetv2.my_utils.stats import asterix_p_value, fit_diff_time_mixedlm, get_average_over_time
 from nnunetv2.my_utils.metrics import comparative_stats, compare_multiclass_masks, compare_masks
 from nnunetv2.my_utils.utils import np2sitk, image_or_path_load, sitk_dilate_mm, select_from_dataframe
 from matplotlib.colors import to_rgb
 from typing import List, Optional
+import pingouin as pg
+from statsmodels.miscmodels.ordinal_model import OrderedModel
 
 def test_figures(pc, args, channel_dct=None, select_exp=['t246','t0']):
 
@@ -116,7 +119,7 @@ def build_metric_tables(
         pivot = pivot.sort_index(axis=0, level=[0,1])
         pivot = pivot.sort_index(axis=1, level=[0,1])
 
-        tables[metric] = pivot
+        tables[metric] = pivot.reset_index()
 
     return tables
 
@@ -136,6 +139,11 @@ def compute_id_wise_differences(data: pd.DataFrame, round_dct, exp_combis: list[
 
     for exp1, exp2 in exp_combis:
         # Filter data for the two experiments
+        if not set([exp1, exp2]).issubset(data['experiment'].unique()):
+            print('exp not in data', exp1, exp2)
+            print(exp1 in data['experiment'].unique(), exp2 in data['experiment'].unique())
+            continue
+
         subset = data[data['experiment'].isin([exp1, exp2])]
         tmp = []
         for metric in round_dct.keys():
@@ -444,8 +452,12 @@ def data_prep(data):
     data['main_dataset'] =  get_main_dataset_name(data.ID)
     data['experiment'] = [exp.replace('time_averages_', 'cta_') for exp in data['experiment']]
     data['experiment'] = data['experiment'].replace(args.experiments)
-    data['model'] = [exp.split(' ')[0] if ' w' in exp else exp for exp in data['experiment']]
-    data['model_subtype'] = [exp.split(' ')[1] if ' w' in exp else '' for exp in data['experiment']]
+    #data['model'] = [exp.split(' ')[0] if ' w' in exp else exp for exp in data['experiment']]
+    #data['model_subtype'] = [exp.split(' ')[1] if ' w' in exp else '' for exp in data['experiment']]
+    data['model'] = [' '.join(exp.split(' ')[:-1]) if ' ' in exp else '_'.join(exp.split('_')[:-1]) for exp in
+                              data['experiment']]  # if not 'Canals' in exp else exp
+
+    data['model_subtype'] = [exp.split(' ')[-1] if ' ' in exp else exp.split('_')[-1] for exp in data['experiment']]
 
     data = channel_cols(data, select_chans=getattr(args, 'chans', None))
     return data
@@ -957,7 +969,7 @@ def barplot_performance_models(
 def barplots():
 
 
-    analyses_together = {'minCC0.01mL':['headmasks_minCC0.01mL', 'headmasks_adj509_dil5_minCC0.01mL'],
+    analyses_together = {#'minCC0.01mL':['headmasks_minCC0.01mL', 'headmasks_adj509_dil5_minCC0.01mL'],
                          'minCC0mL': ['headmasks_minCC1e-07mL', 'headmasks_adj509_dil5_minCC1e-07mL'],
                          }
 
@@ -974,7 +986,8 @@ def barplots():
                 'dataset': ['ctp_sim','cta', 'poorcta'],
                 'analysis':analysis}
 
-        tmp = select_from_dataframe(tmp, conditions_dict=sdct)
+        tmp = select_from_dataframe(tmp, conditions_dict=sdct #, verbose=True
+                                    )
         tmp['dataset'] = tmp['dataset'].replace('ctp_sim', 'Simulated CTA').replace('cta', 'Real CTA').replace(
             'poorcta', 'Poor quality CTA')
         col_order = ['Simulated CTA', 'Real CTA', 'Poor quality CTA']
@@ -1156,182 +1169,28 @@ def diff_plots(data):
         #make bland altman style plot with boxplots for diff
 
 
-def old_barplot_performance_over_timepoints(
+def barplot_performance_over_timepoints(
     data: pd.DataFrame,
     outcomes: List[str],
     timepoint_col: str,
-    model_label: str = "experiment",     # with vs without augmentation
-    res_type: str = "res_type",          # Artery / Vein
+    model_label: str = "experiment",
+    res_type: str = "res_type",
     height: float = 3.5,
     aspect: float = 1.4,
     row_order: Optional[List[str]] = None,
     col_order: Optional[List[str]] = None,
     time_order: Optional[List] = None,
     hue_order: Optional[List[str]] = None,
-    sharey: bool = False,               # IMPORTANT: keep row-specific scales
     title: Optional[str] = None,
     palette: str | dict = "tab10",
     legend: bool = True,
-    rotate_xticks: int = None,
-):
-    """
-    Rows   → outcomes (metrics)
-    Cols   → res_type (Artery / Vein)
-    X-axis → timepoint_col
-    Hue    → model_label (e.g., with vs without contrast-phase augmentation)
-    Bars   → mean; errorbar → SE
-    """
-
-    df = data.copy()
-
-    # -----------------------------
-    # reshape outcomes → rows
-    # -----------------------------
-    id_vars = [model_label, res_type, timepoint_col]
-    df = df.melt(
-        id_vars=id_vars,
-        value_vars=outcomes,
-        var_name="Outcome",
-        value_name="Value"
-    )
-
-    # -----------------------------
-    # ordering
-    # -----------------------------
-    if row_order is not None:
-        df["Outcome"] = pd.Categorical(df["Outcome"], categories=row_order, ordered=True)
-    else:
-        row_order = df["Outcome"].unique().tolist()
-
-    if col_order is not None:
-        df[res_type] = pd.Categorical(df[res_type], categories=col_order, ordered=True)
-    else:
-        col_order = df[res_type].unique().tolist()
-
-    if time_order is not None:
-        df[timepoint_col] = pd.Categorical(df[timepoint_col], categories=time_order, ordered=True)
-
-    if hue_order is not None:
-        df[model_label] = pd.Categorical(df[model_label], categories=hue_order, ordered=True)
-
-    # -----------------------------
-    # palette
-    # -----------------------------
-    if isinstance(palette, str):
-        palette = dict(
-            zip(
-                df[model_label].astype(str).unique(),
-                sns.color_palette(palette, df[model_label].nunique())
-            )
-        )
-
-    # -----------------------------
-    # main plot (bars with SE)
-    # -----------------------------
-    g = sns.catplot(
-        data=df,
-        x=timepoint_col,
-        y="Value",
-        hue=model_label,
-        col=res_type,
-        row="Outcome",
-        kind="bar",
-        errorbar="se",            # vertical SE bars (what you want)
-        height=height,
-        aspect=aspect,
-        palette=palette,
-        sharey=False,            # keep independent y per facet
-        legend=legend,
-    )
-
-    # -----------------------------
-    # aesthetics
-    # -----------------------------
-    # clean column titles
-    for j, col_name in enumerate(g.col_names):
-        for i in range(len(g.row_names)):
-            g.axes[i][j].set_title(str(col_name))
-
-    # y-labels = metric names on first column only
-    for i, outcome in enumerate(g.row_names):
-        g.axes[i][0].set_ylabel(outcome)
-
-    for j in range(len(g.col_names)):
-        g.axes[-1][j].set_xlabel(timepoint_col)
-
-    # x-axis labels and ticks on EVERY row
-    for ax in g.axes.flat:
-        ax.tick_params(axis="x", bottom=True, labelbottom=True)
-        if rotate_xticks is not None:
-            for label in ax.get_xticklabels():
-                label.set_rotation(rotate_xticks)
-                label.set_ha("right")
-
-    # grid + tick rotation
-    for ax in g.axes.flat:
-        ax.grid(axis="y", alpha=0.3)
-        for label in ax.get_xticklabels():
-            if rotate_xticks is not None:
-                label.set_rotation(rotate_xticks)
-                label.set_ha("right")
-
-    # -----------------------------
-    # row-wise y-limits (shared across columns)
-    # -----------------------------
-    row_ylims = {}
-    for outcome in df["Outcome"].unique():
-        vals = df.loc[df["Outcome"] == outcome, "Value"].dropna()
-        if len(vals) == 0:
-            continue
-
-        ymin = vals.min()
-        ymax = vals.max()
-
-        pad = 0.05 * (ymax - ymin) if ymax > ymin else 0.05 * abs(ymax)
-        row_ylims[outcome] = (ymin - pad, ymax + pad)
-
-    # apply shared y-limits per row
-    for i, outcome in enumerate(g.row_names):
-        if outcome not in row_ylims:
-            continue
-        ymin, ymax = row_ylims[outcome]
-        for j in range(len(g.col_names)):
-            g.axes[i][j].set_ylim(ymin, ymax)
-
-    if title is not None:
-        g.figure.suptitle(title, y=1.02)
-
-    return g
-
-def barplot_performance_over_timepoints(
-    data: pd.DataFrame,
-    outcomes: list[str],
-    timepoint_col: str,
-    model_label: str = "experiment",
-    res_type: str = "res_type",
-    height: float = 3.5,
-    aspect: float = 1.4,
-    row_order: list[str] | None = None,
-    col_order: list[str] | None = None,
-    time_order: list | None = None,
-    hue_order: list[str] | None = None,
-    title: str | None = None,
-    palette: str | dict = "tab10",
-    legend: bool = True,
     rotate_xticks: int | None = None,
+    lower_pad_frac: float = 0.10,  # ← 10% above lowest SEM
 ):
-    """
-    Rows   → outcomes (metrics)
-    Cols   → res_type (e.g., Artery / Vein)
-    X-axis → timepoint_col (shown on every row)
-    Hue    → model_label
-    Bars   → mean; errorbar → SE
-    Y-axis → shared per row (not starting at 0)
-    """
     df = data.copy()
 
     # -----------------------------
-    # reshape outcomes → rows
+    # reshape
     # -----------------------------
     id_vars = [model_label, res_type, timepoint_col]
     df = df.melt(
@@ -1345,24 +1204,20 @@ def barplot_performance_over_timepoints(
     # ordering
     # -----------------------------
     if row_order is not None:
-        df["Outcome"] = pd.Categorical(df["Outcome"], categories=row_order, ordered=True)
+        df["Outcome"] = pd.Categorical(df["Outcome"], row_order, ordered=True)
     else:
         row_order = df["Outcome"].unique().tolist()
 
     if col_order is not None:
-        df[res_type] = pd.Categorical(df[res_type], categories=col_order, ordered=True)
+        df[res_type] = pd.Categorical(df[res_type], col_order, ordered=True)
     else:
         col_order = df[res_type].unique().tolist()
 
     if time_order is not None:
-        df[timepoint_col] = pd.Categorical(
-            df[timepoint_col], categories=time_order, ordered=True
-        )
+        df[timepoint_col] = pd.Categorical(df[timepoint_col], time_order, ordered=True)
 
     if hue_order is not None:
-        df[model_label] = pd.Categorical(
-            df[model_label], categories=hue_order, ordered=True
-        )
+        df[model_label] = pd.Categorical(df[model_label], hue_order, ordered=True)
 
     # -----------------------------
     # palette
@@ -1376,19 +1231,7 @@ def barplot_performance_over_timepoints(
         )
 
     # -----------------------------
-    # compute row-wise y-limits
-    # -----------------------------
-    row_ylims = {}
-    for outcome in row_order:
-        vals = df.loc[df["Outcome"] == outcome, "Value"].dropna()
-        if len(vals) == 0:
-            continue
-        ymin, ymax = vals.min(), vals.max()
-        pad = 0.05 * (ymax - ymin) if ymax > ymin else 0.05 * abs(ymax)
-        row_ylims[outcome] = (ymin - pad, ymax + pad)
-
-    # -----------------------------
-    # main plot
+    # plot
     # -----------------------------
     g = sns.catplot(
         data=df,
@@ -1402,56 +1245,85 @@ def barplot_performance_over_timepoints(
         height=height,
         aspect=aspect,
         palette=palette,
-        sharey=False,   # we handle row-sharing manually
+        sharey="row",
         legend=legend,
     )
 
     # -----------------------------
-    # titles and labels
+    # column titles
     # -----------------------------
     for j, col_name in enumerate(g.col_names):
         for i in range(len(g.row_names)):
             g.axes[i][j].set_title(str(col_name))
-
-    for i, outcome in enumerate(g.row_names):
-        g.axes[i][0].set_ylabel(outcome)
-
     # -----------------------------
-    # x-axis on every row
-    # -----------------------------
-    for ax in g.axes.flat:
-        ax.tick_params(axis="x", bottom=True, labelbottom=True)
-        if rotate_xticks is not None:
-            for label in ax.get_xticklabels():
-                label.set_rotation(rotate_xticks)
-                label.set_ha("right")
-        ax.grid(axis="y", alpha=0.3)
-
-    # -----------------------------
-    # apply shared y-limits per row
+    # y-limits + y-labels PER CELL
     # -----------------------------
     for i, outcome in enumerate(g.row_names):
-        if outcome not in row_ylims:
-            continue
-        ymin, ymax = row_ylims[outcome]
+        sub = df[df["Outcome"] == outcome]
+
+        stats = (
+            sub.groupby([timepoint_col, model_label])["Value"]
+            .agg(["mean", "sem"])
+            .dropna()
+        )
+
+        ymin = 0.5 * stats["mean"].min()
+        ymax = (stats["mean"] + stats["sem"]).max()*1.05
+
         for j in range(len(g.col_names)):
-            g.axes[i][j].set_ylim(ymin, ymax)
+            ax = g.axes[i][j]
+            ax.set_ylim(ymin, ymax)
+            ax.set_ylabel(outcome)  # label on every cell
+            ax.tick_params(axis="y", labelleft=True)  # ✅ SHOW numbers on 2nd column
+            ax.grid(axis="y", alpha=0.3)
 
+    # -----------------------------
+    # x-axis labels & ticks
+    # -----------------------------
+    n_rows = len(g.row_names)
+    for i in range(n_rows):
+        for j in range(len(g.col_names)):
+            ax = g.axes[i][j]
+
+            # show ticks everywhere
+            ax.tick_params(axis="x", labelbottom=True)
+
+            # xlabel ONLY on last row
+            if i == n_rows - 1:
+                ax.set_xlabel(timepoint_col)
+            else:
+                ax.set_xlabel("")
+
+            if rotate_xticks is not None:
+                for lbl in ax.get_xticklabels():
+                    lbl.set_rotation(rotate_xticks)
+                    lbl.set_ha("right")
+
+    # -----------------------------
+    # title
+    # -----------------------------
     if title is not None:
-        g.figure.suptitle(title, y=1.02)
+        g.figure.suptitle(title, y=1.03)
+
+    g.figure.subplots_adjust(wspace=0.1)
 
     return g
 
 def simcta_barplot(data):
 
-    analyses_together = {'minCC0.01mL':['headmasks_minCC0.01mL', 'headmasks_adj509_dil5_minCC0.01mL'],
-                         'minCC0mL': ['headmasks_minCC1e-07mL', 'headmasks_adj509_dil5_minCC1e-07mL'],
+    analyses_together = {#'minCC0.01mL':['headmasks_minCC0.01mL', 'headmasks_adj509_dil5_minCC0.01mL'],
+                         #'minCC0mL': ['headmasks_minCC1e-07mL', 'headmasks_adj509_dil5_minCC1e-07mL'],
+                        #'original':['org'],
+                         'minCC0mL_dil5': ['headmasks_adj509_dil5_minCC1e-07mL'],
+                        #'minCC0mL': ['headmasks_minCC1e-07mL'],
+                        'lblCTP': ['headmasks_lblCTP_minCC1e-07mL'],
                          }
 
     #colors = {k:v['color'] for k,v in args.plot_info.items()}
     #hatches = {k:v['hatch'] for k,v in args.plot_info.items()}
     colors = args.colors
     hatches = None
+    dir_simcta = os.path.join(dir_figures, 'simcta')
 
     for name, analysis in analyses_together.items():
         tmp = data.copy()
@@ -1460,7 +1332,7 @@ def simcta_barplot(data):
                 'analysis':analysis,
                 'experiment': ['nnUNet-org w/o', 'nnUNet-org w']
                 }
-        tmp = select_from_dataframe(tmp, conditions_dict=sdct)
+        tmp = select_from_dataframe(tmp, conditions_dict=sdct, verbose=True)
         tmp['Time to peak arterial phase (seconds)'] = tmp['channel'].astype(int)
 
         time_order = tmp['Time to peak arterial phase (seconds)'].unique()
@@ -1478,9 +1350,9 @@ def simcta_barplot(data):
             hue_order=['nnUNet-org w/o', 'nnUNet-org w'],
             palette=colors
         )
+        plt.savefig(os.path.join(dir_simcta, f'simcta_{name}_timepoints.tiff'), bbox_inches="tight", dpi=300)
+        plt.savefig(os.path.join(dir_simcta, f'simcta_{name}_timepoints.png'), bbox_inches="tight", dpi=300)
         plt.show()
-
-        print(1)
 
 
 def cs_wide_to_long(
@@ -1529,46 +1401,55 @@ def cs_wide_to_long(
     return out
 
 
-def fetch_qcs_data(args, cdata):
+def fetch_qcs_data(args, cdata, qcs_funcs=['volume']):
 
     dir_qcs = os.path.join(args.cta_pred, 'collateral_scores')
     qcs_files = {k:os.path.join(dir_qcs, k+'_collateral_scores.xlsx') for k in args.experiments.keys()}
 
     ih_left = cdata['Infarct_side_left'].to_dict()
 
-    for k, v in tqdm(qcs_files.items()):
-        aqcs_col, vqcs_col = f'{k}--aQCS', f'{k}--vQCS'
-        if aqcs_col in cdata.columns and vqcs_col in cdata.columns:
-            continue
-        if not os.path.exists(v):
-            continue
+    for k, file in tqdm(qcs_files.items()):
+        aqcs_main, vqcs_main = f'{k}--aQCS', f'{k}--vQCS'
+        for func in qcs_funcs:
+            aqcs_col, vqcs_col = f'{aqcs_main}--{func}', f'{vqcs_main}--{func}'
 
-        qcs = pd.read_excel(v, index_col='ID')
-        a, v, both = qcs[qcs['mask_val']=='artery'], qcs[qcs['mask_val']=='vein'], qcs[qcs['mask_val']=='av_both']
-        #if infarct left 2/1=left/right hemisphere is the correct qcs
-        aqcs, vqcs, a_both, v_both = {}, {}, {}, {}
-        for ID in qcs.index:
-            if ID in ih_left:
-                if ih_left[ID]==1:
-                    colscore = '_2/1'
-                elif ih_left[ID]==0:
-                    colscore = '_1/2'
+            if aqcs_col in cdata.columns and vqcs_col in cdata.columns:
+                continue
+            if not os.path.exists(file):
+                continue
+
+            qcs = pd.read_excel(file, index_col='ID')
+            qcs = qcs[qcs['func']==func]
+            if len(qcs)==0:
+                print(f'No QCS data for {k} with function {func}, skipping...')
+                continue
+            a, v, both = qcs[qcs['mask_val']=='artery'], qcs[qcs['mask_val']=='vein'], qcs[qcs['mask_val']=='av_both']
+            #if infarct left 2/1=left/right hemisphere is the correct qcs
+            aqcs, vqcs, a_both, v_both = {}, {}, {}, {}
+            for ID in qcs.index:
+                if ID in ih_left:
+                    if ih_left[ID]==1:
+                        colscore = '_2/1'
+                    elif ih_left[ID]==0:
+                        colscore = '_1/2'
+                    else:
+                        colscore = '_auto_score'
                 else:
                     colscore = '_auto_score'
-            else:
-                colscore = '_auto_score'
-            aqcs[ID] = a[f'{args.artery_score}{colscore}'].loc[ID]
-            vqcs[ID] = v[f'{args.vein_score}{colscore}'].loc[ID]
-            a_both[ID] = both[f'{args.artery_score}{colscore}'].loc[ID]
-            v_both[ID] = both[f'{args.vein_score}{colscore}'].loc[ID]
-        aqcs = pd.DataFrame.from_dict(aqcs, orient='index', columns=[f'{k}--aQCS'])
-        vqcs = pd.DataFrame.from_dict(vqcs, orient='index', columns=[f'{k}--vQCS'])
-        a_both = pd.DataFrame.from_dict(a_both, orient='index', columns=[f'{k}--aQCSboth'])
-        v_both = pd.DataFrame.from_dict(v_both, orient='index', columns=[f'{k}--vQCSboth'])
-        cdata = cdata.merge(aqcs, left_index=True, right_index=True, how='left')
-        cdata = cdata.merge(vqcs, left_index=True, right_index=True, how='left')
-        cdata = cdata.merge(a_both, left_index=True, right_index=True, how='left')
-        cdata = cdata.merge(v_both, left_index=True, right_index=True, how='left')
+                aqcs[ID] = a[f'{args.artery_score}{colscore}'].loc[ID]
+                vqcs[ID] = v[f'{args.vein_score}{colscore}'].loc[ID]
+                a_both[ID] = both[f'{args.artery_score}{colscore}'].loc[ID]
+                v_both[ID] = both[f'{args.vein_score}{colscore}'].loc[ID]
+
+            aqcs = pd.DataFrame.from_dict(aqcs, orient='index', columns=[f'{k}--aQCS--{func}'])
+            vqcs = pd.DataFrame.from_dict(vqcs, orient='index', columns=[f'{k}--vQCS--{func}'])
+            a_both = pd.DataFrame.from_dict(a_both, orient='index', columns=[f'{k}--aQCSboth--{func}'])
+            v_both = pd.DataFrame.from_dict(v_both, orient='index', columns=[f'{k}--vQCSboth--{func}'])
+
+            cdata = cdata.merge(aqcs, left_index=True, right_index=True, how='left')
+            cdata = cdata.merge(vqcs, left_index=True, right_index=True, how='left')
+            cdata = cdata.merge(a_both, left_index=True, right_index=True, how='left')
+            cdata = cdata.merge(v_both, left_index=True, right_index=True, how='left')
 
     #rename collateral scores for plotting
     tan_dct = {0:'0%', 1:'1–50%', 2:'51–99%', 3:'100%'}
@@ -1579,16 +1460,38 @@ def fetch_qcs_data(args, cdata):
                                             ordered=True
                                         )
 
+    # cdata['Cortical vein opacification score'] =  pd.Categorical(
+    #                                                         pd.cut(
+    #                                                             cdata["COVES"],
+    #                                                             bins=[-0.1, 2.1, 4.1, 6.1],
+    #                                                             labels=["0–2", "3–4", "5–6"],
+    #                                                             right=True
+    #                                                         ),
+    #                                                         categories=["0–2", "3–4", "5–6"],
+    #                                                         ordered=True
+    #                                                     )
+    # cdata['Cortical vein opacification score'] =  pd.Categorical(
+    #                                                         pd.cut(
+    #                                                             cdata["COVES"],
+    #                                                             bins=[-0.1, 1.1, 4.1, 6],
+    #                                                             labels=["0–1", "2–4", "5–6"],
+    #                                                             right=True
+    #                                                         ),
+    #                                                         categories=["0–1", "2–4", "5–6"],
+    #                                                         ordered=True
+    #                                                     )
+
     cdata['Cortical vein opacification score'] =  pd.Categorical(
                                                             pd.cut(
                                                                 cdata["COVES"],
-                                                                bins=[-0.1, 2, 4, 6],
-                                                                labels=["0–2", "3–4", "5–6"],
+                                                                bins=[-0.1, 1.1, 3.1, 5.1, 6.1],
+                                                                labels=["0–1", "2–3", "4-5", "6"],
                                                                 right=True
                                                             ),
-                                                            categories=["0–2", "3–4", "5–6"],
+                                                            categories=["0–1", "2–3", "4-5", "6"],
                                                             ordered=True
                                                         )
+
 
     return cdata
 
@@ -1609,70 +1512,219 @@ def plot_tan_coves(
     coves_col="COVES_group",
     figsize=(8, 4),
     art_color='#E74C3C',
-    vein_color='#3498DB'
+    vein_color='#3498DB',
+    violin=False,
+    subplot_labels=[],
+    ylim=None,
+    art_kwargs=None,
+    vein_kwargs=None,
 ):
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    art_kwargs = dict(
-        data=data,
-        y=aqcs_col,
-        hue=hue,
-        color=art_color,
-        showfliers=False,
-    )
+    if art_kwargs is None:
+        art_kwargs = dict(
+            data=data,
+            y=aqcs_col,
+            hue=hue,
+            color=art_color,
+            #showfliers=False,
+        )
+        if not violin:
+            art_kwargs['showfliers'] = False
 
-    vein_kwargs = dict(
-        data=data,
-        y=vqcs_col,
-        hue=hue,
-        color=vein_color,
-        showfliers=False,
-    )
+    if vein_kwargs is None:
+        vein_kwargs = dict(
+            data=data,
+            y=vqcs_col,
+            hue=hue,
+            color=vein_color,
+            #showfliers=False,
+        )
+        if not violin:
+            vein_kwargs['showfliers'] = False
 
     # ---- Panel A: Tan ----
-    sns.boxplot(
-        x=tan_col,
-        ax=axes[0],
-        **art_kwargs,
-    )
+    if violin:
+        sns.violinplot(
+            x=tan_col,
+            ax=axes[0],
+            **art_kwargs,
+        )
+    else:
+        sns.boxplot(
+            x=tan_col,
+            ax=axes[0],
+            **art_kwargs,
+        )
 
     axes[0].set_xlabel(tan_col)
-    axes[0].set_ylabel(aqcs_col)
+    axes[0].set_ylabel(aqcs_col.split('--')[0])
     axes[0].tick_params(axis="y")
+    axes[0].set_title("Arterial: Reader vs QCS", fontsize=12)
+    if ylim is not None:
+        axes[0].set_ylim(ylim)
 
-    axes[0].text(
-        0.02, 0.95, "A",
-        transform=axes[0].transAxes,
-        fontsize=12,
-        fontweight="bold",
-        va="top",
-    )
+    if len(subplot_labels)>0:
+        axes[0].text(
+            0.02, 0.95, subplot_labels[0],
+            transform=axes[0].transAxes,
+            fontsize=12,
+            fontweight="bold",
+            va="top",
+        )
 
     # ---- Panel B: COVES ----
-    sns.boxplot(
-        x=coves_col,
-        ax=axes[1],
-        legend=False,
-        **vein_kwargs,
-    )
+    if violin:
+        sns.violinplot(
+            x=coves_col,
+            ax=axes[1],
+            legend=False,
+            **vein_kwargs,
+        )
+    else:
+        sns.boxplot(
+            x=coves_col,
+            ax=axes[1],
+            legend=False,
+            **vein_kwargs,
+        )
 
     axes[1].set_xlabel(coves_col)
-    axes[1].set_ylabel(vqcs_col)
+    axes[1].set_ylabel(vqcs_col.split('--')[0])
     axes[1].tick_params(axis="y")
+    axes[1].set_title("Venous: Reader vs QCS", fontsize=12)
+    if ylim is not None:
+        axes[1].set_ylim(ylim)
 
-    axes[1].text(
-        0.02, 0.95, "B",
-        transform=axes[1].transAxes,
-        fontsize=12,
-        fontweight="bold",
-        va="top",
-    )
-
-
+    if len(subplot_labels) > 0:
+        axes[1].text(
+            0.02, 0.95, subplot_labels[1],
+            transform=axes[1].transAxes,
+            fontsize=12,
+            fontweight="bold",
+            va="top",
+        )
 
     plt.tight_layout()
 
+    return fig, axes
+
+def plot_tan_coves_violin(
+    data,
+    aqcs_col,
+    vqcs_col,
+    hue,                  # e.g. augmentation / experiment
+    qcs_type_col=None,    # second hue (type of QCS)
+    tan_col="Tan collateral score",
+    coves_col="COVES_group",
+    figsize=(8, 4),
+    hue_name_map=None, # mapping of hue names → readable labels
+    art_palette=None, # color dictionaries (must match hue labels AFTER mapping)
+    vein_palette=None,
+    split_qcs=False,      # split violin for QCS type (must be 2 levels)
+    subplot_labels=['A', 'B']
+):
+    """
+    Violin version of tan/coves plot with:
+    - hue for experiment
+    - optional second hue for QCS type
+    - custom palette dicts for arterial and venous
+    """
+
+    df = data.copy()
+
+    # -----------------------------
+    # rename hue labels if mapping provided
+    # -----------------------------
+    if hue_name_map is not None:
+        df[hue] = df[hue].map(hue_name_map).fillna(df[hue])
+
+    # -----------------------------
+    # create combined hue if QCS type provided
+    # -----------------------------
+    if qcs_type_col is not None:
+        df["combined_hue"] = (
+            df[hue].astype(str) + " | " + df[qcs_type_col].astype(str)
+        )
+        plot_hue = "combined_hue"
+    else:
+        plot_hue = hue
+
+    # -----------------------------
+    # default palettes if none provided
+    # -----------------------------
+    if art_palette is None:
+        art_palette = {
+            k: v for k, v in zip(df[plot_hue].unique(),
+                                 sns.color_palette("Reds", len(df[plot_hue].unique())))
+        }
+
+    if vein_palette is None:
+        vein_palette = {
+            k: v for k, v in zip(df[plot_hue].unique(),
+                                 sns.color_palette("Blues", len(df[plot_hue].unique())))
+        }
+
+    # -----------------------------
+    # plotting
+    # -----------------------------
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    # ---------- PANEL A : ARTERIAL ----------
+    sns.violinplot(
+        data=df,
+        x=tan_col,
+        y=aqcs_col,
+        hue=plot_hue,
+        palette=art_palette,
+        #inner="quartile",
+        #cut=0,
+        dodge=not split_qcs,
+        split=split_qcs if qcs_type_col else False,
+        ax=axes[0],
+        #saturation=1,
+    )
+
+    axes[0].set_xlabel(tan_col)
+    axes[0].set_ylabel(aqcs_col.split('--')[0])
+    axes[0].text(0.02, 0.95, subplot_labels[0], transform=axes[0].transAxes,
+                 fontsize=12, fontweight="bold", va="top")
+    axes[0].legend(
+        loc="lower right",
+        title=None,
+        frameon=False,
+        fontsize=10,
+    )
+
+    # ---------- PANEL B : VENOUS ----------
+    sns.violinplot(
+        data=df,
+        x=coves_col,
+        y=vqcs_col,
+        hue=plot_hue,
+        palette=vein_palette,
+        #inner="quartile",
+        #cut=0,
+        dodge=not split_qcs,
+        split=split_qcs if qcs_type_col else False,
+        ax=axes[1],
+        legend=True,
+        #saturation=1,
+    )
+
+    axes[1].set_xlabel(coves_col)
+    axes[1].set_ylabel(vqcs_col.split('--')[0])
+    axes[1].text(0.02, 0.95, subplot_labels[1], transform=axes[1].transAxes,
+                 fontsize=12, fontweight="bold", va="top")
+    axes[1].legend(
+        loc="lower right",
+        title=None,
+        frameon=False,
+        fontsize=10,
+    )
+
+    plt.tight_layout()
     return fig, axes
 
 
@@ -1681,7 +1733,8 @@ def plot_av_outcome(
     y_var: str,
     a: str,
     v: str,
-    figsize=(16, 6)
+    figsize=(16, 6),
+    add_direction_txt=True
 ):
     """
     Plot artery, vein, and their mismatch against a continuous y variable.
@@ -1726,7 +1779,7 @@ def plot_av_outcome(
         ax.set_ylabel(y_var)
         ax.grid(True)
 
-        if x == a:
+        if x == a and add_direction_txt:
             # ** lower left annotation with arrow **
             ax.text(
                 0.02, 0.005,
@@ -1743,7 +1796,7 @@ def plot_av_outcome(
                 fontweight="bold",
                 va="top",
             )
-        elif x == v:
+        elif x == v and add_direction_txt:
             # ** lower left annotation with arrow **
             ax.text(
                 0.02, 0.005,
@@ -1761,7 +1814,7 @@ def plot_av_outcome(
                 va="top",
             )
 
-        elif x == "aQCS - vQCS mismatch":
+        elif x == "aQCS - vQCS mismatch" and add_direction_txt:
             ax.axvline(0, linestyle="--", color="gray")
 
             # text left of x=0 line (data x = 0)
@@ -1800,6 +1853,62 @@ def plot_av_outcome(
 
     return fig, axes
 
+def mixed_effects_reader_vs_auto_cs(df, measurement_col, outcome_col, method_col='hue', target_method="A"):
+    # method must be numeric or dummy coded
+    df = df.copy()
+
+    df[f"method_{target_method}"] = (df[method_col] == target_method).astype(int)
+
+    # interaction term
+    df["interaction"] = df[measurement_col] * df[f"method_{target_method}"]
+
+    mask = df[[outcome_col, measurement_col, method_col, "interaction"]].notnull().all(axis=1)
+    df = df[mask]
+
+    model = OrderedModel(
+        df[outcome_col],
+        df[[measurement_col, f"method_{target_method}", "interaction"]],
+        distr="logit"
+    )
+
+    res = model.fit(method="bfgs")
+
+    return res
+
+
+def multiple_cat_cont_comps(data, xs, yx, nan_policy="omit", icc_type='ICC2k'):
+
+    from jonckheere_test import jonckheere_test
+
+    out = []
+    for x,y in zip(xs, yx):
+        if nan_policy=="omit":
+            mask = data[[x,y]].notnull().all(axis=1)
+            tmp = data.copy()[mask]
+        else:
+            tmp = data.copy()
+
+        rho, p = stats.spearmanr(tmp[x].astype(float), tmp[y].astype(float), nan_policy=nan_policy)
+        jt = jonckheere_test(tmp[x].astype(float), tmp[y].astype(float))
+
+        tmp2= tmp.melt(
+            id_vars=['ID'],  # keep ID unchanged
+            value_vars=[x,y],  # columns to “unpivot”
+            var_name='rater',  # name for the new “rater/method” column
+            value_name='score'  # name for the new values column
+        )
+        tmp2['score'] = tmp2['score'].astype(float)
+
+        icc = pg.intraclass_corr(data=tmp2, targets='ID', raters='rater', ratings='score')
+        icc_row = icc[icc['Type'] == icc_type].iloc[0]
+
+        out.extend([rho,p, jt.statistic, jt.p_value, jt.z_score,
+                    icc_row['ICC'], icc_row['CI95%'][0], icc_row['CI95%'][1], icc_row['pval'],
+                    icc_row['df1'], icc_row['df2']
+                    ])
+
+    return out
+
 def multiple_spearmans(data, xs, yx, nan_policy="omit"):
     out = []
     for x,y in zip(xs, yx):
@@ -1807,125 +1916,492 @@ def multiple_spearmans(data, xs, yx, nan_policy="omit"):
         out.extend([rho,p])
     return out
 
+def multiple_jonckheere(data, xs, yx, nan_policy="omit"):
+    from jonckheere_test import jonckheere_test
+    out = []
+    for x,y in zip(xs, yx):
+        jt = jonckheere_test(data[x].astype(float), data[y].astype(float))
+        out.append([jt.statistic, jt.p_value, jt.z_score])
+    return out
 
-def tan_coves_plot(input_data, dir_fig, qcs_exp, tan_var=None, coves_var=None, subgroups=[]):
+def multiple_icc(data, xs, yx, nan_policy="omit"):
+    from jonckheere_test import jonckheere_test
+    out = []
+    for x,y in zip(xs, yx):
+
+        icc = pg.intraclass_corr(data=data, targets='Wine', raters='Judge',
+                                 ratings='Scores').round(3)
+
+    return out
+
+
+def tan_coves_plot(input_data,
+                   dir_fig,
+                   qcs_exp,
+                   tan_var=None,
+                   coves_var=None,
+                   subgroups=[],
+                   qcs_funcs=['volume', 'median_density'],
+                   plot=False):
 
     if dir_fig is not None:
         os.makedirs(dir_fig, exist_ok=True)
 
-    input_data = fetch_qcs_data(args, input_data)
+    input_data = fetch_qcs_data(args, input_data, qcs_funcs=qcs_funcs)
     input_data['Post transfer DWI infarct volume (log₁₀ mL)'] = np.log10(np.clip(input_data['blt_vol'].astype(float), 0.99,1000))
     yvar = 'Post transfer DWI infarct volume (log₁₀ mL)'
     input_data[yvar] = input_data[yvar].replace([np.inf, -np.inf], np.nan)
+
     data = cs_wide_to_long(input_data, cols=['ID',
                                        tan_var,
                                        coves_var,
                                        *subgroups,
                                        "CTA_Tan_collateral_score",
                                        'COVES',
-                                       yvar,
+                                       yvar
                                        ], sep="--")
+    data['hue'] = data['hue']#.map(args.experiments)
 
     out = [] #for correlations
-    for a,v in qcs_exp:
-        data[a] = np.clip(data[a],0.0, 1.0)
-        data[v] = np.clip(data[v],0.0, 1.0)
-        for exp in data['hue'].unique():
-            tmp = data[data['hue']==exp]
+    for func in qcs_funcs:
+        for a,v in qcs_exp:
+            a_var, v_var = f'{a}--{func}', f'{v}--{func}'
+            data[a_var] = np.clip(data[a_var],0.0, 1.3)
+            data[v_var] = np.clip(data[v_var],0.0, 1.3)
+            #print(func, data[a_var].max(), data[v_var].max())
+            xs = [a_var, tan_var, 'COVES', tan_var, 'COVES', a_var, v_var, "aQCS - vQCS mismatch"]
+            ys = [v_var, a_var, v_var, yvar, yvar, yvar, yvar, yvar]
 
-            sns.scatterplot(tmp, x=a, y=v)
-            plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_vs_{v}_scatter.png'))
-            plt.title(args.experiments[exp])
-            plt.show()
+            #mixed effects model for w and w/o contrast phase augmentation
+            # mixed effects
+            # target_method = next(s for s in data['hue'].unique() if "Dataset521" in s)
+            # meA = mixed_effects_reader_vs_auto_cs(data,
+            #                                      measurement_col=a_var,
+            #                                      outcome_col=tan_var,
+            #                                      method_col='hue',
+            #                                      target_method=target_method)
+            #
+            # meA = mixed_effects_reader_vs_auto_cs(data,
+            #                                      measurement_col=v_var,
+            #                                      outcome_col=coves_var,
+            #                                      method_col='hue',
+            #                                      target_method=target_method)
 
-            plot_tan_coves(
-                tmp,
-                aqcs_col=a,
-                vqcs_col=v,
-                hue=None,
-                tan_col=tan_var,
-                coves_col=coves_var,
-                figsize=(8, 4),
-            )
-            plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_and_{v}_boxplot.png'))
-            plt.show()
 
-            plot_av_outcome(tmp, yvar, a, v)
-            plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_and_{v}_vs_DWI_scatter.png'))
-            plt.show()
+            for exp in data['hue'].unique():
+                tmp = data[data['hue']==exp]
 
-            tmp.loc[:,"aQCS - vQCS mismatch"]  = tmp[a] - (tmp[[a, v]].mean(axis=1))
+                #name = args.experiments[exp]
 
-            sprmn = multiple_spearmans(tmp,
-                                   [a, tan_var, 'COVES', tan_var, 'COVES', a, v, "aQCS - vQCS mismatch"],
-                                   [v, a, v, yvar, yvar, yvar, yvar, yvar])
+                if plot:
+                    sns.scatterplot(tmp, x=a_var, y=v_var)
+                    plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_vs_{v}_scatter.png'))
+                    plt.title(args.experiments[exp])
+                    plt.show()
 
-            out.append([exp, 'main', a,v, *sprmn])
+                    plot_tan_coves(
+                        tmp,
+                        aqcs_col=a_var,
+                        vqcs_col=v_var,
+                        hue=None,
+                        tan_col=tan_var,
+                        coves_col=coves_var,
+                        figsize=(8, 4),
+                    )
+                    plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_and_{v}_{func}_boxplot.png'))
+                    plt.show()
 
-            for subgroup in subgroups:
-                subdir_fig = os.path.join(dir_fig, subgroup)
-                os.makedirs(subdir_fig, exist_ok=True)
+                    plot_av_outcome(tmp, yvar, a_var, v_var)
+                    plt.savefig(os.path.join(dir_fig, f'{exp}_{a}_and_{v}_{func}_vs_DWI_scatter.png'))
+                    plt.show()
 
-                tmp = data[(data['hue']==exp) & data[subgroup]==True]
-                sns.scatterplot(tmp, x=a, y=v)
-                plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_vs_{v}_{subgroup}True_scatter.png'))
-                plt.show()
+                tmp["aQCS - vQCS mismatch"]  = tmp[a_var].values - tmp[v_var].values #tmp[a_var] - (tmp[[a_var, v_var]].mean(axis=1))
 
-                plot_tan_coves(
-                    tmp,
-                    aqcs_col=a,
-                    vqcs_col=v,
-                    hue=None,
-                    tan_col=tan_var,
-                    coves_col=coves_var,
-                    figsize=(8, 4),
-                )
-                plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_and_{v}_{subgroup}True_boxplot.png'))
-                plt.show()
+                #combined stat tests
+                res = multiple_cat_cont_comps(tmp, xs, ys)
+                out.append([exp, 'main', func, a,v, *res])
 
-                tmp["aQCS - vQCS mismatch"] = tmp[a] - (tmp[[a, v]].mean(axis=1))
-                sprmn = multiple_spearmans(tmp,
-                                           [a, tan_var, 'COVES', tan_var, 'COVES', a, v, "aQCS - vQCS mismatch"],
-                                           [v, a, v, yvar, yvar, yvar, yvar, yvar])
+                for subgroup in subgroups:
+                    subdir_fig = os.path.join(dir_fig, subgroup)
+                    os.makedirs(subdir_fig, exist_ok=True)
 
-                out.append([exp,  f'{subgroup}True', a, v, *sprmn])
+                    tmp = data[(data['hue']==exp) & data[subgroup]==True]
+                    if len(tmp)==0:
+                        continue
 
-                tmp = data[(data['hue'] == exp) & data[subgroup] == False]
-                sns.scatterplot(tmp, x=a, y=v)
-                plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_vs_{v}_{subgroup}False_boxplot.png'))
-                plt.show()
+                    if plot:
+                        sns.scatterplot(tmp, x=a_var, y=v_var)
+                        plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_vs_{v}_{subgroup}True_{func}_scatter.png'))
+                        plt.show()
 
-                plot_tan_coves(
-                    tmp,
-                    aqcs_col=a,
-                    vqcs_col=v,
-                    hue=None,
-                    tan_col=tan_var,
-                    coves_col=coves_var,
-                    figsize=(8, 4),
-                )
-                plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_and_{v}_{subgroup}False_boxplot.png'))
-                plt.show()
+                        plot_tan_coves(
+                            tmp,
+                            aqcs_col=a_var,
+                            vqcs_col=v_var,
+                            hue=None,
+                            tan_col=tan_var,
+                            coves_col=coves_var,
+                            figsize=(8, 4),
+                        )
+                        plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_and_{v}_{subgroup}True_{func}_boxplot.png'))
+                        plt.show()
 
-                sprmn = multiple_spearmans(tmp,
-                                           [a, tan_var, 'COVES', tan_var, 'COVES', a, v, "aQCS - vQCS mismatch"],
-                                           [v, a, v, yvar, yvar, yvar, yvar, yvar])
+                    tmp["aQCS - vQCS mismatch"] = tmp[a_var] - (tmp[[a_var, v_var]].mean(axis=1))
+                    res = multiple_cat_cont_comps(tmp, xs, ys)
+                    out.append([exp,  f'{subgroup}True', func, a, v, *res])
 
-                out.append([exp,  f'{subgroup}False', a, v, *sprmn])
+                    tmp = data[(data['hue'] == exp) & data[subgroup] == False]
+                    if plot:
+                        sns.scatterplot(tmp, x=a_var, y=v_var)
+                        plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_vs_{v}_{subgroup}False_{func}_boxplot.png'))
+                        plt.show()
 
-    out = pd.DataFrame(out, columns=['experiment', 'subgroup', 'aqcs_col', 'vqcs_col',
-                                        'rho_aqcs_vqcs', 'p_aqcs_vqcs',
-                                        'rho_tan_aqcs', 'p_tan_aqcs',
-                                        'rho_coves_vqcs', 'p_coves_vqcs',
-                                        'rho_tan_dwi', 'p_tan_dwi',
-                                        'rho_coves_dwi', 'p_coves_dwi',
-                                        'rho_aqcs_dwi', 'p_aqcs_dwi',
-                                        'rho_vqcs_dwi', 'p_vqcs_dwi',
-                                        'rho_mismatch_dwi', 'p_mismatch_dwi'
+                        plot_tan_coves(
+                            tmp,
+                            aqcs_col=a_var,
+                            vqcs_col=v_var,
+                            hue=None,
+                            tan_col=tan_var,
+                            coves_col=coves_var,
+                            figsize=(8, 4),
+                        )
+                        plt.savefig(os.path.join(subdir_fig, f'{exp}_{a}_and_{v}_{subgroup}False_{func}_boxplot.png'))
+                        plt.show()
+
+                    res = multiple_cat_cont_comps(tmp, xs, ys)
+                    out.append([exp,  f'{subgroup}False', func, a, v, *res])
+
+    res_cols = ['rho_', 'rho_p_', 'jt_statistic_', 'jt_p_', 'jt_z_', 'icc_', 'icc_cilow_', 'icc_cihi_', 'icc_p_', 'df1_', 'df2_']
+
+    xname = [x.split("--")[0].split(' ')[0] for x in xs]
+    yname = [y.split("--")[0].split(' ')[0] if not 'DWI' in y else 'dwi' for y in ys]
+    combi = [x+'_'+y for x,y in zip(xname, yname)]
+    res_cols = [rc+c for c in combi for rc in res_cols]
+
+    out = pd.DataFrame(out, columns=['experiment', 'subgroup', 'qcs_func',
+                                        'aqcs_col', 'vqcs_col', *res_cols
+                                        # 'rho_aqcs_vqcs', 'p_aqcs_vqcs',
+                                        # 'rho_tan_aqcs', 'p_tan_aqcs',
+                                        # 'rho_coves_vqcs', 'p_coves_vqcs',
+                                        # 'rho_tan_dwi', 'p_tan_dwi',
+                                        # 'rho_coves_dwi', 'p_coves_dwi',
+                                        # 'rho_aqcs_dwi', 'p_aqcs_dwi',
+                                        # 'rho_vqcs_dwi', 'p_vqcs_dwi',
+                                        # 'rho_mismatch_dwi', 'p_mismatch_dwi'
                                      ])
     out.to_excel(os.path.join(dir_fig, 'tan_coves_correlations.xlsx'), index=False)
     return out
 
+def contrast_augmentation_ablation_plots(
+            input_data,
+            sdct,
+            outcome='Dice',
+            select_ablation=['t0', 't2', 't4', 't6', 't24', 't246'],
+            violin=False,  # "violin" or "box"
+            sharey=False,  # whether to share y-axis limits between subplots
+            panel_labels=("A","B"),
+            figsize=(8, 4)
+    ):
+
+        # -----------------------------
+        # rename mapping
+        # -----------------------------
+        rename_ablation = {
+            't0': "w/o",
+            't2': '±2s',
+            't4': '±4s',
+            't6': '±6s',
+            't24': '±2,4s',
+            't246': '±2,4,6s'
+        }
+
+        # -----------------------------
+        # preprocessing
+        # -----------------------------
+        data = select_from_dataframe(input_data.copy(), conditions_dict=sdct)
+
+        # treat "w" as full augmentation
+        data['model_subtype'] = data['model_subtype'].replace({'w': 't246', 'w/o': 't0'})
+
+        # keep selected ablations
+        data = data[data['model_subtype'].isin(select_ablation)]
+        #data = data[data['res_type']=='Artery']
+
+        # map names
+        data['model_subtype'] = data['model_subtype'].map(rename_ablation)
+
+        # enforce order
+        order = [rename_ablation[x] for x in select_ablation if x in rename_ablation]
+
+        # split datasets
+        simdata = data[data['main_dataset'] == 'stanford']
+        ctadata = data[data['main_dataset'] == 'cta']
+
+        # -----------------------------
+        # plotting helper
+        # -----------------------------
+        def _plot(ax, df, title, color=None):
+
+            if violin:
+                sns.violinplot(
+                    data=df,
+                    x='model_subtype',
+                    y=outcome,
+                    order=order,
+                    inner="box",
+                    cut=0,
+                    ax=ax,
+                    color=color
+                )
+            else:
+                sns.boxplot(
+                    data=df,
+                    x='model_subtype',
+                    y=outcome,
+                    order=order,
+                    showfliers=False,
+                    ax=ax,
+                    color=color
+                )
+
+            ax.set_title(title, fontsize=12)
+            ax.set_xlabel("")
+            ax.set_ylabel(outcome)
+
+            #ax.tick_params(axis='x', rotation=45)
+
+            sns.despine(ax=ax, right=False, left=False)
+
+            # extra safety (matplotlib can hide spines in shared mode)
+            ax.spines["left"].set_visible(True)
+            ax.spines["right"].set_visible(True)
+        # -----------------------------
+        # figure
+        # -----------------------------
+        fig, axes = plt.subplots(
+            1, 2,
+            figsize=figsize,
+            sharey=sharey  # <-- applied here
+        )
+
+        _plot(axes[0], ctadata[ctadata['res_type']=='Artery'], "Real CTA Artery segmentation", args.artery_color)
+        _plot(axes[1], ctadata[ctadata['res_type']=='Vein'], "Real CTA Vein segmentation", args.vein_color)
+        axes[1].tick_params(axis='y', labelleft=True)
+        if len(panel_labels)>0:
+            axes[0].text(
+                0.02, 0.95, panel_labels[0],
+                transform=axes[0].transAxes,
+                fontsize=12,
+                fontweight="bold",
+                va="top",
+            )
+            axes[1].text(
+                0.02, 0.95, panel_labels[1],
+                transform=axes[1].transAxes,
+                fontsize=12,
+                fontweight="bold",
+                va="top",
+            )
+
+        fig.supxlabel("Contrast phase augmentation protocol", y=0.05, fontsize=12) #
+        plt.tight_layout()
+        return fig, axes
+
+
+def miccai_tan_coves_plot(input_data,
+                    perfdata,
+                   dir_fig,
+                   tan_var=None,
+                   coves_var=None,
+                   subgroups=[],
+                   qcs_funcs=['volume', 'median_density'],
+                   plot=True):
+
+    qcs_exp = [('aQCS', 'vQCS')]
+    # subgroups=['thin_subgroup'],
+    tan_var = 'Tan collateral score'
+    coves_var = 'Cortical vein opacification score'
+
+    if dir_fig is not None:
+        os.makedirs(dir_fig, exist_ok=True)
+
+    input_data = fetch_qcs_data(args, input_data, qcs_funcs=qcs_funcs)
+
+    data = cs_wide_to_long(input_data, cols=['ID',
+                                       tan_var,
+                                       coves_var,
+                                       *subgroups,
+                                       "CTA_Tan_collateral_score",
+                                       'COVES'
+                                       ], sep="--")
+    data['hue'] = data['hue'].map(args.experiments)
+
+
+
+    for qcs_fun in qcs_funcs:
+        # sdct = {
+        #     ['t0', 't2', 't4', 't6', 't24', 't246']
+        # }
+
+        sdct = {#'experiment': [e1, e2],
+                'model': ['cta_Dataset521_AV_timechan', 'nnUNet-org'],
+                'model_subtype': ['w/o','w', 't0', 't2', 't4', 't6', 't24', 't246'],
+                'analysis': ['headmasks_minCC1e-07mL', 'headmasks_adj509_dil10_minCC1e-07mL'],
+                #'res_type': 'Vein'
+        }
+
+        fig1, axes1 = contrast_augmentation_ablation_plots(perfdata,
+                                                        sdct=sdct,
+                                                        outcome='Dice',
+                                                        sharey=False
+                                                        )
+        plt.savefig(os.path.join(dir_fig, f'contrast_aug_ablation_{qcs_fun}.png'))
+        plt.show()
+
+
+        aqcs, vqcs = f'aQCS--{qcs_fun}', f'vQCS--{qcs_fun}'
+        ylim = (0,1.2)
+        data[aqcs] = np.clip(data[f'aQCS--{qcs_fun}'],*ylim)
+        data[vqcs] = np.clip(data[f'vQCS--{qcs_fun}'],*ylim)
+
+        plot_tan_coves_violin(
+            data,
+            aqcs,
+            vqcs,
+            hue='hue',  # e.g. augmentation / experiment
+            qcs_type_col=None,  # second hue (type of QCS)
+            tan_col=tan_var,
+            coves_col=coves_var,
+            figsize=(8, 4),
+            hue_name_map=None,  # mapping of hue names → readable labels
+            art_palette=None,  # color dictionaries (must match hue labels AFTER mapping)
+            vein_palette=None,
+            split_qcs=False,  # split violin for QCS type (must be 2 levels)
+            subplot_labels=['A', 'B']
+        )
+        plt.savefig(os.path.join(dir_fig, f'aqcs-vqcs_{qcs_fun}_w-wo_violin.png'))
+        plt.show()
+
+        fig2, axes2 = plot_tan_coves(
+                                data[data['hue']=='nnUNet-org w'],  # only plot for one experiment
+                                aqcs_col=aqcs,
+                                vqcs_col=vqcs,
+                                hue=None,
+                                art_color=args.artery_color,
+                                vein_color=args.vein_color,
+                                tan_col=tan_var,
+                                coves_col=coves_var,
+                                figsize=(8, 4),
+                                subplot_labels=['C', 'D'],
+                                violin=False,
+                                ylim=(ylim[0], ylim[1]+0.05)
+                            )
+        plt.savefig(os.path.join(dir_fig, f'aqcs-vqcs_{qcs_fun}_boxplot.png'))
+        plt.show()
+
+
+
+def build_results_table(
+    excel_path,
+    analysis,
+    res_type,
+    metrics,
+    datasets=("alltimes", "cta"),
+):
+    """
+    Build final summary table from performance excel.
+
+    Parameters
+    ----------
+    excel_path : str or Path
+    analysis : str
+        Analysis name to filter (must match sheet content)
+    res_type : str
+        "Artery" or "Vein"
+    metrics : list[str]
+        Sheet names / outcome metrics in desired order
+    datasets : iterable[str], default ("alltimes", "cta")
+        Datasets to include
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows = exp_base
+        Columns = MultiIndex:
+            [res_type, dataset, metric, w / w-o]
+    """
+
+    excel_path = Path(excel_path)
+    xls = pd.ExcelFile(excel_path)
+    # allow single string
+    if isinstance(analysis, str):
+        analysis = [analysis]
+    if isinstance(res_type, str):
+        res_type = [res_type]
+
+    all_long = []
+    for metric in metrics:
+
+        if metric not in xls.sheet_names:
+            raise ValueError(f"Metric '{metric}' not found in workbook")
+
+        df = pd.read_excel(excel_path, sheet_name=metric, header=[0,1])
+        df = df.set_index([
+            ('analysis', 'Unnamed: 1_level_1'),
+            ('res_type', 'Unnamed: 2_level_1'),
+            ('exp_base', 'Unnamed: 3_level_1')
+        ])
+        df = df.iloc[1:] #filter out first row
+        df = df.drop(('dataset', 'version'), axis=1)
+        df.index = df.index.set_names(['analysis','res_type', 'exp_base'])
+
+        # filter analysis and res_type and dataset
+        df = df.loc[
+            (df.index.get_level_values("analysis").isin(analysis)) &
+            (df.index.get_level_values("res_type").isin(res_type))
+            ]
+        df = df.loc[:, df.columns.get_level_values(0).isin(datasets)]
+
+        # -------------------------------------------------
+        # reshape → long
+        # -------------------------------------------------
+        long_df = (
+            df
+            .stack([0, 1])  # dataset, wflag
+            .rename("value")
+            .reset_index()
+        ).rename(columns={
+            "level_3": "dataset",
+            "level_4": "exp"
+        })
+
+        long_df["metric"] = metric
+
+        all_long.append(long_df)
+
+    # -----------------------------------------------------
+    # combine all metrics
+    # -----------------------------------------------------
+    if not all_long:
+        raise ValueError("No matching data found")
+
+    long_all = pd.concat(all_long, ignore_index=True)
+
+    # -----------------------------------------------------
+    # pivot to final structure
+    # -----------------------------------------------------
+    final = (
+        long_all
+        .pivot_table(
+            index="exp_base",
+            columns=["res_type", "dataset", "metric", "exp"],
+            values="value",
+            aggfunc="first"
+        )
+        .sort_index(axis=1)
+    )
+
+    return final
 
 if __name__ == "__main__":
     args = init_args()
@@ -1934,6 +2410,7 @@ if __name__ == "__main__":
     os.makedirs(dir_figures, exist_ok=True)
     f_perf_table = os.path.join(args.p_out, 'performance_summary.xlsx')
     f_diff_table = os.path.join(args.p_out, 'differences_stats.xlsx')
+    f_report_table = os.path.join(args.p_out, 'final_report_table.xlsx')
     data = get_test_results(args.p_out, overwrite=args.overwrite)
     data = data_prep(data)
 
@@ -1952,12 +2429,27 @@ if __name__ == "__main__":
 
     #make summary performance tables
     if not os.path.exists(f_perf_table) or args.overwrite:
+        data['Dice'], data['clDice'] = data['Dice']*100, data['clDice']*100
+        data['analysis'] = data['analysis'].replace('headmasks_adj509_dil5_minCC1e-07mL', 'headmasks_minCC1e-07mL')
+
         summary_table = mean_sd_table(data,
                                         partition_by=['main_dataset','analysis','dataset', 'experiment', 'res_type'],
                                         rounding = args.round_dct if hasattr(args, 'round_dct') else None,
                                         use_plus_minus = True,
                                         use_se=True
                                         )
+
+        simsumtab = mean_sd_table(data[data['main_dataset']=='stanford'],
+                                    partition_by=['analysis', 'experiment', 'res_type'],
+                                    rounding = args.round_dct if hasattr(args, 'round_dct') else None,
+                                    use_plus_minus = True,
+                                    use_se=True
+                                    )
+        simsumtab['main_dataset'], simsumtab['dataset'] = 'stanford', 'alltimes'
+        summary_table = pd.concat([summary_table, simsumtab], axis=0, ignore_index=True)
+        summary_table['model_subtype'] = [exp.split(' ')[-1] if ' ' in exp else exp.split('_')[-1] for exp in summary_table['experiment']]
+        summary_table['model'] = [' '.join(exp.split(' ')[:-1]) if ' ' in exp else '_'.join(exp.split('_')[:-1]) for exp in summary_table['experiment']] #if not 'Canals' in exp else exp
+
         summary_table.to_excel(f_perf_table)
         #TODO: make separate tab with final results
         m = build_metric_tables(summary_table, metrics=args.round_dct.keys(), exp_order=exp_order)
@@ -1965,6 +2457,15 @@ if __name__ == "__main__":
     else:
         summary_table = pd.read_excel(f_perf_table)
 
+    if not os.path.exists(f_report_table) or args.overwrite:
+        table = build_results_table(
+                                excel_path=f_perf_table.replace('.xlsx', '_per_metric.xlsx'),
+                                analysis='headmasks_minCC1e-07mL',
+                                res_type=['Artery', 'Vein'],
+                                metrics=['Dice', 'clDice'],  # specify the metrics to include
+                                datasets=("alltimes", "cta"),
+                            ).reindex(exp_order)
+        table.to_excel(f_report_table)
 
     if hasattr(args, 'chans'):
         chan_dct = {chan: int(chan[1:])*-1 if 'm' in chan else int(chan[1:]) for chan in args.chans}
@@ -1976,18 +2477,32 @@ if __name__ == "__main__":
 
     #Tan and Coves comparison
     cdata = load_clinical_data(args)
-    # subgroup <0.7mm vs >0.7mm (exclude all >1.5mm)
-    cdata['thin_subgroup'] = cdata['z_spacing']<=0.7
-    #make plot 2 models aQCS vs Tan and vQCS vs COVES
-    # tan_coves_plot(cdata,
-    #                os.path.join(dir_figures, 'tan_coves'),
-    #                qcs_exp=[('aQCS', 'vQCS'), ('aQCSboth', 'vQCSboth')],
-    #                # subgroups=['thin_subgroup'],
-    #                tan_var='Tan collateral score',
-    #                coves_var='Cortical vein opacification score')
-
     simcta_barplot(data)
-    #barplots()
+
+    # subgroup <0.7mm vs >0.7mm (exclude all >1.5mm)
+    #cdata['thin_subgroup'] = cdata['z_spacing']<=0.7
+
+    #plot tan_coves (2 subplots) and ablation for contrast phase augmentation (simCTA res and CTA res)
+
+    barplots()
+
+    #make plot 2 models aQCS vs Tan and vQCS vs COVES
+    tan_coves_plot(cdata,
+                   os.path.join(dir_figures, 'tan_coves'),
+                   qcs_exp=[('aQCS', 'vQCS'), ('aQCSboth', 'vQCSboth')],
+                   #subgroups=['thin_subgroup'],
+                   tan_var='Tan collateral score',
+                   coves_var='Cortical vein opacification score',
+                   plot=True
+                   )
+
+    miccai_tan_coves_plot(cdata, data,
+                           os.path.join(dir_figures, 'tan_coves_miccai')
+                           )
+
+
+    #simcta_barplot(data)
+
     #simCTA results
     # simcta_plots(data,
     #              [exp_combis[0]],

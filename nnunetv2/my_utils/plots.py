@@ -442,3 +442,134 @@ def test_time_plots(data,
 
 
 
+import matplotlib as mpl
+
+
+def combine_figures_with_real_axes(
+        fig1, axes1,
+        fig2, axes2,
+        add_labels=True,
+        panel_labels=("A","B","C","D"),
+        label_pos=(-0.12, 1.05),
+        figsize=(10, 8)
+):
+    """
+    Combine two figures (each with 2 axes) into one 2x2 figure
+    by copying plot artists (NOT images).
+    """
+
+    newfig, newaxes = plt.subplots(2, 2, figsize=figsize)
+
+    src_axes = [axes1[0], axes1[1], axes2[0], axes2[1]]
+    dst_axes = newaxes.flatten()
+
+    for src, dst in zip(src_axes, dst_axes):
+
+        # copy all drawable artists
+        for artist in src.get_children():
+
+            if isinstance(artist, (mpl.spines.Spine,
+                                   mpl.axis.Axis,
+                                   mpl.text.Text)):
+                continue
+
+            try:
+                artist.remove()
+                dst.add_artist(artist)
+            except Exception:
+                pass
+
+        # copy axis properties
+        dst.set_xlim(src.get_xlim())
+        dst.set_ylim(src.get_ylim())
+        dst.set_xlabel(src.get_xlabel())
+        dst.set_ylabel(src.get_ylabel())
+        dst.set_title(src.get_title())
+
+        # copy ticks
+        dst.set_xticks(src.get_xticks())
+        dst.set_xticklabels([t.get_text() for t in src.get_xticklabels()])
+        dst.set_yticks(src.get_yticks())
+        dst.set_yticklabels([t.get_text() for t in src.get_yticklabels()])
+
+        # ensure y-axis visible
+        dst.tick_params(axis='y', labelleft=True)
+        dst.spines["left"].set_visible(True)
+
+    # panel labels
+    if add_labels:
+        for ax, lab in zip(dst_axes, panel_labels):
+            ax.text(label_pos[0], label_pos[1], lab,
+                    transform=ax.transAxes,
+                    fontweight="bold",
+                    fontsize=14)
+
+    plt.tight_layout()
+    return newfig, newaxes
+def combine_figures_2x2(
+        fig1, axes1,
+        fig2, axes2,
+        labels=("A", "B", "C", "D"),
+        add_labels=True,
+        label_pos=(0.02, 0.95),
+        label_fontsize=14,
+        figsize=(10, 8)
+):
+    """
+    Combine two figures (each with 2 axes) into one 2x2 figure
+    by rendering axes as images.
+
+    Layout:
+        axes1 -> top row
+        axes2 -> bottom row
+    """
+
+    # -------- helper to convert axis to image --------
+    def axis_to_image(fig, ax):
+        fig.canvas.draw()
+
+        bbox = ax.get_window_extent().transformed(
+            fig.dpi_scale_trans.inverted()
+        )
+
+        width, height = fig.canvas.get_width_height()
+        buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        buf = buf.reshape(height, width, 4)
+
+        x0 = int(bbox.x0 * fig.dpi)
+        x1 = int(bbox.x1 * fig.dpi)
+        y0 = int(bbox.y0 * fig.dpi)
+        y1 = int(bbox.y1 * fig.dpi)
+
+        return buf[y0:y1, x0:x1]
+
+    # -------- extract images --------
+    imgs = [
+        axis_to_image(fig1, axes1[0]),
+        axis_to_image(fig1, axes1[1]),
+        axis_to_image(fig2, axes2[0]),
+        axis_to_image(fig2, axes2[1]),
+    ]
+
+    # -------- new figure --------
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    for ax, img in zip(axes.flatten(), imgs):
+        ax.imshow(img)
+        ax.axis("off")
+
+    # -------- panel labels --------
+    if add_labels:
+        for ax, lab in zip(axes.flatten(), labels):
+            ax.text(
+                label_pos[0],
+                label_pos[1],
+                lab,
+                transform=ax.transAxes,
+                fontsize=label_fontsize,
+                fontweight="bold",
+                va="top"
+            )
+
+    plt.tight_layout()
+    return fig, axes
